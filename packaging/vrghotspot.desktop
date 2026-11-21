@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=VRG Hotspot
+Comment=Share a VPN connection over Wi-Fi
+Exec=vrghotspot
+Icon=vrghotspot
+Terminal=false
+Categories=Network;

@@ -1,0 +1,25 @@
+/target
+/staging
+/artifacts/
+# Container build caches and per-format target dirs (see local_build.sh)
+/.buildcache
+/.container-target
+/node_modules
+/dist
+/gen/
+/.npm
+/.yarn
+/.pnp.*
+/.vite
+/coverage
+*.tsbuildinfo
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+*.pem
+# Private keys — never commit
+/key
+*.key
+id_ed25519
+id_rsa
+*.txt

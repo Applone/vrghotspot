@@ -1,0 +1,150 @@
+name: Build packages
+
+on:
+  workflow_call:
+    inputs:
+      configuration:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  BUILD_CONFIGURATION: ${{ inputs.configuration }}
+  GOTOOLCHAIN: local
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  linux:
+    name: ${{ matrix.name }} x64
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Debian 13
+            format: deb
+            package: "*.deb"
+          - name: Enterprise Linux 10
+            format: rpm
+            package: "*.rpm"
+          - name: Arch Linux
+            format: archlinux
+            package: "*.pkg.tar.zst"
+    env:
+      FORMAT: ${{ matrix.format }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Build and test in the target distribution
+        run: bash scripts/local_build.sh --mode container --engine docker --bundles "$FORMAT"
+
+      - name: Install package in a fresh runtime container
+        run: |
+          docker build --target "$FORMAT-runtime" -t vrghotspot-runtime packaging
+          docker run --rm -e FORMAT -v "$PWD/artifacts:/packages:ro" vrghotspot-runtime bash -euc '
+            case "$FORMAT" in
+              deb) apt-get update && apt-get install -y --no-install-recommends /packages/*.deb ;;
+              rpm) dnf -y install /packages/*.rpm ;;
+              archlinux) pacman -Syu --noconfirm && pacman -U --noconfirm /packages/*.pkg.tar.zst ;;
+            esac
+            test -x /usr/bin/vrghotspot
+            test -s /usr/share/applications/vrghotspot.desktop
+            test -s /usr/share/icons/hicolor/32x32/apps/vrghotspot.png
+            test -s /usr/share/polkit-1/actions/app1oneme.vrghotspot.policy
+            libs=$(ldd /usr/bin/vrghotspot)
+            if [[ $libs == *"not found"* ]]; then echo "$libs"; exit 1; fi
+            vrghotspot-diagnostics --help
+          '
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vrghotspot-${{ inputs.configuration }}-${{ matrix.format }}-x64
+          path: artifacts/${{ matrix.package }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  windows:
+    name: Windows x64 NSIS
+    runs-on: windows-latest
+    env:
+      TARGET: x86_64-pc-windows-gnu
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - uses: msys2/setup-msys2@v2
+        id: mingw
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc
+
+      - name: Add MinGW to PATH
+        shell: pwsh
+        run: |
+          Join-Path '${{ steps.mingw.outputs.msys2-location }}' 'mingw64/bin' |
+            Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+          targets: ${{ env.TARGET }}
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: src/third_party/core_bridge/go.mod
+          cache-dependency-path: src/third_party/core_bridge/go.sum
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-${{ inputs.configuration }}
+
+      - name: Check and test
+        shell: bash
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+          bun run check
+          bun test frontend
+          cargo fmt --all -- --check
+          cargo check --locked --all-targets --all-features --target "$TARGET"
+          cargo clippy --locked --all-targets --all-features --target "$TARGET" -- -D warnings
+          cargo test --locked --all-targets --all-features --target "$TARGET"
+
+      - name: Build NSIS installer
+        shell: bash
+        run: bash scripts/package-windows.sh
+
+      - name: Install and check the Windows payload
+        shell: pwsh
+        run: |
+          $installer = @(Get-ChildItem "artifacts/*.exe")
+          if ($installer.Count -ne 1) { throw 'Expected one NSIS installer' }
+          $dir = Join-Path $env:RUNNER_TEMP 'vrghotspot-install'
+          $process = Start-Process $installer[0].FullName -ArgumentList "/S /D=$dir" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installer exited with $($process.ExitCode)" }
+          foreach ($file in 'vrghotspot.exe', 'vrghotspot-diagnostics.exe', 'WebView2Loader.dll') {
+            if (!(Test-Path (Join-Path $dir $file) -PathType Leaf)) { throw "Missing $file" }
+          }
+          & (Join-Path $dir 'vrghotspot-diagnostics.exe') --help
+          if ($LASTEXITCODE -ne 0) { throw 'Installed diagnostics failed to start' }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vrghotspot-${{ inputs.configuration }}-nsis-x64
+          path: artifacts/*.exe
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7

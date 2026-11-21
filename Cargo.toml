@@ -1,0 +1,90 @@
+[package]
+name = "vrghotspot"
+version = "0.1.0"
+edition = "2024"
+build = "src/build.rs"
+default-run = "vrghotspot"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "vrghotspot"
+path = "src/main.rs"
+
+[features]
+default = ["custom-protocol"]
+cli = []
+custom-protocol = ["tauri/custom-protocol"]
+
+[dependencies]
+anyhow = "1.0.104"
+async-trait = "0.1"
+base64 = "0.23"
+opentelemetry = { version = "0.33", default-features = false, features = ["metrics", "logs"] }
+opentelemetry-http = { version = "0.33", default-features = false }
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["http-proto", "metrics", "logs", "tokio"] }
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["metrics", "logs", "experimental_metrics_custom_reader"] }
+percent-encoding = "2"
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+sha2 = "0.10.9"
+libc = "0.2"
+sysinfo = "0.40"
+tauri = { version = "2", features = [] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+url = "2"
+uuid = { version = "1", features = ["serde", "v4"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+
+[target.'cfg(all(windows, target_arch = "x86_64"))'.dependencies]
+windows = { version = "0.62.2", features = [
+    "Networking_Connectivity",
+    "Networking_NetworkOperators",
+    "Win32_Foundation",
+    "Win32_NetworkManagement_Dns",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinSock",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Ole",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+    "Win32_System_Variant",
+    "Win32_System_WinRT",
+    "Win32_System_Wmi",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+windows-future = "0.3.2"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dev-dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = "deny"
+
+[profile.release]
+opt-level = "z"
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"

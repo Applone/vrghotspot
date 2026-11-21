@@ -1,0 +1,789 @@
+@font-face {
+  font-family: 'Roboto';
+  src: url('../assets/fonts/roboto-latin.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
+    U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Roboto';
+  src: url('../assets/fonts/roboto-cyrillic.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
+@font-face {
+  font-family: 'Material Symbols Rounded';
+  src: url('../assets/fonts/material-symbols-rounded.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
+/* Linux desktops ship no color country-flag glyphs in every default font:
+   regional indicator pairs render as boxed letters (e.g. "FI") instead of a
+   flag. Bundle the Twemoji country-flag font so the flag codepoints resolve to
+   real glyphs, scoped by `unicode-range` so it never overrides regular text.
+   Covers regional indicators (U+1F1E6–1F1FF) plus the tag-sequence base
+   (U+1F3F4) used by subdivision flags. */
+@font-face {
+  font-family: 'Twemoji Country Flags';
+  src: url('../assets/fonts/TwemojiCountryFlags.woff2') format('woff2');
+  font-display: swap;
+  unicode-range: U+1F1E6-1F1FF, U+1F3F4, U+E0060-E00FF;
+}
+
+:root {
+  color-scheme: light;
+  font-family: Roboto, 'Segoe UI', sans-serif;
+  font-size: 16px;
+  --surface: #f7faff;
+  --surface-low: #f1f5fa;
+  --surface-container: #eaf1f8;
+  --surface-high: #e2edf6;
+  --on-surface: #18232c;
+  --on-surface-variant: #425560;
+  --outline: #707e87;
+  --outline-variant: #c9d7e0;
+  --primary: #01579b;
+  --on-primary: #fff;
+  --primary-container: #b3e5fc;
+  --on-primary-container: #002c4b;
+  --secondary-container: #d4e9f7;
+  --error: #a22521;
+  --error-container: #ffedea;
+  --on-error-container: #681b16;
+  --content-width: 31rem;
+  color: var(--on-surface);
+  background: var(--surface);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 19rem;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+
+h1,
+h2,
+p,
+ul,
+dl,
+dd {
+  margin: 0;
+}
+
+h1 {
+  font-size: 2rem;
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  line-height: 1.14;
+  text-wrap: balance;
+}
+
+h2 {
+  font-size: 1.0625rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+strong,
+summary {
+  font-weight: 550;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled,
+input:disabled,
+select:disabled {
+  cursor: default;
+}
+
+:where(button, input, textarea, select, summary):focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+
+.icon {
+  display: inline-block;
+  flex: none;
+  font-family: 'Material Symbols Rounded';
+  font-feature-settings: 'liga';
+  font-size: 24px;
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: normal;
+  white-space: nowrap;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+.app-bar-inner,
+.screen {
+  width: min(100%, var(--content-width));
+  padding-inline: clamp(1.125rem, 5vw, 1.75rem);
+  margin-inline: auto;
+}
+
+.app-bar-inner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: 4.5rem;
+}
+
+.brand {
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: -0.0125em;
+}
+
+.settings-button {
+  margin-inline-start: auto;
+}
+
+.screen {
+  padding-block: 0.375rem 2rem;
+}
+
+.stack {
+  display: grid;
+  align-content: start;
+  gap: 1rem;
+}
+
+.screen.stack {
+  gap: 1.375rem;
+}
+
+.stack.compact {
+  gap: 0.625rem;
+}
+
+.muted {
+  color: var(--on-surface-variant);
+}
+
+p.muted:empty {
+  display: none;
+}
+
+.button,
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 0;
+  border-radius: 999px;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease;
+}
+
+.button {
+  min-height: 2.75rem;
+  padding: 0.5rem 1rem;
+  width: fit-content;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.button .icon {
+  font-size: 20px;
+}
+
+.icon-button {
+  flex: none;
+  width: 2.75rem;
+  height: 2.75rem;
+  padding: 0;
+  color: var(--on-surface-variant);
+  background: transparent;
+}
+
+.settings-button,
+.tonal {
+  color: var(--on-primary-container);
+  background-color: var(--secondary-container);
+}
+
+.filled {
+  background-color: var(--primary);
+  color: var(--on-primary);
+}
+
+.text {
+  color: var(--primary);
+  background: transparent;
+}
+
+.button:hover:not(:disabled),
+.icon-button:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 100px rgb(0 47 86 / 8%);
+}
+
+.filled:hover:not(:disabled) {
+  background-color: #064a81;
+}
+
+.button:active:not(:disabled),
+.icon-button:active:not(:disabled) {
+  box-shadow: inset 0 0 0 100px rgb(0 47 86 / 14%);
+}
+
+.button:disabled {
+  color: #52616c;
+  background-color: #d9e2e9;
+}
+
+.button.text:disabled {
+  background-color: transparent;
+}
+
+.actions,
+.section-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+}
+
+.section-heading {
+  justify-content: space-between;
+}
+
+.hero {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  align-items: end;
+  min-height: 14.25rem;
+  overflow: hidden;
+  padding: 1.5rem;
+  border-radius: 1.75rem;
+  background: #e1f5fe;
+  color: var(--on-primary-container);
+}
+
+.hero.active {
+  background: var(--primary-container);
+}
+
+.hero-content {
+  display: grid;
+  justify-items: start;
+  gap: 0.6rem;
+}
+
+.hero-status {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.hero h1 {
+  max-inline-size: 13rem;
+  font-size: clamp(1.75rem, 7vw, 2.125rem);
+}
+
+.hero-content .button {
+  margin-top: 0.625rem;
+}
+
+.hero-art {
+  position: absolute;
+  z-index: -1;
+  display: grid;
+  place-items: center;
+  inline-size: 14rem;
+  block-size: 14rem;
+  inset-block-start: -1.75rem;
+  inset-inline-end: -3rem;
+}
+
+.signal-rings {
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgb(2 136 209 / 18%);
+  border-radius: 50%;
+  background: repeating-radial-gradient(
+    circle,
+    transparent 0 16px,
+    rgb(2 136 209 / 17%) 17px 18px,
+    transparent 19px 23px
+  );
+  mask-image: radial-gradient(circle, #000 48%, rgb(0 0 0 / 45%) 100%);
+}
+
+.hero-symbol {
+  display: grid;
+  place-items: center;
+  inline-size: 4.5rem;
+  block-size: 4.5rem;
+  border-radius: 1.5rem;
+  background-color: #b3e5fc;
+  color: var(--primary);
+}
+
+.hero.active .hero-symbol {
+  background-color: #81d4fa;
+}
+
+.hero-symbol .icon {
+  font-size: 34px;
+}
+
+.device-count {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.875rem;
+}
+
+.device-count .icon {
+  font-size: 18px;
+}
+
+.panel,
+.credential-card,
+.list-button {
+  border-radius: 1.25rem;
+  background-color: var(--surface-container);
+}
+
+.panel {
+  padding: 1rem;
+}
+
+.list-button {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  width: 100%;
+  min-height: 3.75rem;
+  padding: 0.625rem 0.875rem;
+  text-align: start;
+  border: 0;
+}
+
+.list-button:hover:not(:disabled) {
+  background-color: var(--surface-high);
+}
+
+.list-button.selected {
+  background-color: var(--secondary-container);
+  color: var(--on-primary-container);
+}
+
+.list-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 2.375rem;
+  height: 2.375rem;
+  border-radius: 0.875rem;
+  background-color: var(--secondary-container);
+  color: var(--primary);
+  font:
+    600 1rem 'Twemoji Country Flags',
+    Roboto,
+    sans-serif;
+}
+
+.selected .list-icon {
+  background-color: var(--primary-container);
+}
+
+.list-label {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 500;
+}
+
+.profile-list {
+  display: grid;
+  gap: 0.375rem;
+  padding: 0;
+  list-style: none;
+}
+
+.credential-card {
+  padding-inline: 0.875rem;
+}
+
+.credential {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.credential + .credential,
+.qr-disclosure {
+  border-top: 1px solid var(--outline-variant);
+}
+
+.credential label {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  padding-block: 0.625rem;
+}
+
+.field-label,
+.field > span {
+  font-size: 0.8125rem;
+  color: var(--on-surface-variant);
+  font-weight: 500;
+}
+
+.credential input {
+  width: 100%;
+  padding: 0.1rem 0;
+  border: 0;
+  background: transparent;
+  border-radius: 0.125rem;
+}
+
+.field {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.field :is(input, textarea, select),
+.disclosure textarea {
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--outline);
+  background-color: var(--surface-low);
+  border-radius: 0.5rem;
+}
+
+textarea {
+  resize: vertical;
+}
+
+.field-error {
+  color: var(--error);
+}
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.switch-row small {
+  display: block;
+  margin-top: 0.125rem;
+  font-size: 0.8125rem;
+  color: var(--on-surface-variant);
+}
+
+.switch-row input {
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 3.25rem;
+  height: 2rem;
+  margin: 0;
+  border: 2px solid var(--outline);
+  border-radius: 999px;
+  background: var(--surface-high);
+  cursor: pointer;
+}
+
+.switch-row input::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: 0.375rem;
+  inset-block-start: 50%;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  background-color: var(--outline);
+  transform: translateY(-50%);
+}
+
+.switch-row input:checked {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+
+.switch-row input:checked::before {
+  inset-inline-start: 1.5rem;
+  width: 1.5rem;
+  height: 1.5rem;
+  background-color: var(--on-primary);
+}
+
+.switch-row input:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.notice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.75rem;
+  padding: 0.875rem 1rem;
+  border-radius: 1.25rem;
+  background: var(--secondary-container);
+  color: var(--on-primary-container);
+  overflow-wrap: anywhere;
+}
+
+.notice.problem {
+  color: var(--on-error-container);
+  background: var(--error-container);
+}
+
+.notice.problem .button.text {
+  color: var(--on-error-container);
+}
+
+.notice .button.text {
+  margin-inline-start: -0.5rem;
+}
+
+.disclosure summary,
+.qr-disclosure summary,
+.settings-disclosure summary {
+  cursor: pointer;
+}
+
+.disclosure > :not(summary),
+.settings-disclosure > :not(summary) {
+  margin-block-start: 0.5rem;
+}
+
+.qr-disclosure {
+  padding-block: 0.625rem;
+}
+
+.wifi-qr {
+  display: block;
+  margin: 0.625rem auto 0;
+  border-radius: 0.5rem;
+}
+
+.facts {
+  display: grid;
+  gap: 0.25rem;
+  color: var(--on-surface-variant);
+}
+
+.facts > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.facts dd {
+  text-align: end;
+  overflow-wrap: anywhere;
+}
+
+.announcement {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.logs {
+  max-height: 15rem;
+  padding: 0.75rem;
+  overflow: auto;
+  list-style: none;
+  border-radius: 0.5rem;
+  background: var(--surface);
+  font:
+    0.75rem/1.5 ui-monospace,
+    monospace;
+  overflow-wrap: anywhere;
+}
+
+.logs li + li {
+  margin-top: 0.5rem;
+}
+
+.logs span {
+  color: var(--primary);
+}
+
+dialog {
+  width: min(calc(100% - 2rem), 28rem);
+  max-height: calc(100% - 2rem);
+  padding: 1.5rem;
+  border: 0;
+  border-radius: 1.75rem;
+  background: var(--surface-high);
+  color: var(--on-surface);
+  overflow-wrap: anywhere;
+}
+
+dialog::backdrop {
+  background: rgb(7 30 46 / 42%);
+}
+
+dialog h2 {
+  font-size: 1.375rem;
+  font-weight: 500;
+}
+
+.dialog-actions {
+  justify-content: flex-end;
+}
+
+.consent {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.consent input {
+  accent-color: var(--primary);
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+.clipboard-fallback {
+  position: fixed;
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (max-width: 25rem) {
+  .hero {
+    padding: 1.125rem;
+  }
+
+  .hero-art {
+    inset-inline-end: -4.25rem;
+    inset-block-start: -2.75rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button,
+  .icon-button {
+    transition: none;
+  }
+}
+
+.snackbar {
+  position: fixed;
+  inset-inline: 0;
+  inset-block-end: 1.25rem;
+  margin-inline: auto;
+  width: fit-content;
+  max-width: calc(100% - 2rem);
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  background: #253643;
+  color: #f5f9fd;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.snackbar.visible {
+  visibility: visible;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .screen > h1,
+  .screen > form,
+  .screen > .profile-list,
+  .hero,
+  .notice,
+  .snackbar.visible,
+  dialog[open] {
+    animation: surface-enter 200ms cubic-bezier(0.2, 0, 0, 1) both;
+  }
+
+  dialog[open]::backdrop {
+    animation: backdrop-enter 180ms ease-out;
+  }
+
+  .hero.connecting .signal-rings {
+    animation: signal-pulse 1.3s ease-in-out infinite alternate;
+  }
+
+  .hero.active .hero-symbol {
+    animation: signal-settle 320ms ease-out;
+  }
+
+  .button:active:not(:disabled),
+  .icon-button:active:not(:disabled) {
+    transform: scale(0.96);
+  }
+
+  @keyframes surface-enter {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes backdrop-enter {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes signal-pulse {
+    from {
+      opacity: 0.55;
+      transform: scale(0.94);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1.04);
+    }
+  }
+
+  @keyframes signal-settle {
+    0% {
+      transform: scale(0.9);
+    }
+    65% {
+      transform: scale(1.05);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+}

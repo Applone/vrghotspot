@@ -1,0 +1,69 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Check release tag against application versions
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import tomllib
+          from pathlib import Path
+
+          version = tomllib.loads(Path("Cargo.toml").read_text())["package"]["version"]
+          for name in ("package.json", "tauri.conf.json"):
+              if json.loads(Path(name).read_text())["version"] != version:
+                  raise SystemExit(f"{name} version differs from Cargo.toml ({version})")
+          if os.environ["GITHUB_REF_NAME"] != f"v{version}":
+              raise SystemExit(f"Expected release tag v{version}")
+          PY
+
+  build:
+    needs: validate-tag
+    uses: ./.github/workflows/build.yml
+    with:
+      configuration: Release
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: vrghotspot-Release-*-x64
+          merge-multiple: true
+          path: packages
+      - name: Verify and publish the tested installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        working-directory: packages
+        run: |
+          for ext in deb rpm pkg.tar.zst exe; do
+            files=(*."$ext")
+            [[ ${#files[@]} == 1 && -s "${files[0]}" ]]
+          done
+          sha256sum -- *.deb *.rpm *.pkg.tar.zst *.exe > SHA256SUMS
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" ./* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" ./* --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
+          fi
