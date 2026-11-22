@@ -20,7 +20,7 @@
 }
 
 @font-face {
-  font-family: "Material Symbols Rounded", sans-serif;
+  font-family: "Material Symbols Rounded";
   src: url("../assets/fonts/material-symbols-rounded.woff2") format("woff2");
   font-weight: 400;
   font-style: normal;
@@ -61,6 +61,8 @@
   --error-container: #ffedea;
   --on-error-container: #681b16;
   --content-width: 31rem;
+  --page-gutter: clamp(1rem, 4vw, 1.5rem);
+  --panel-padding: 1rem;
   color: var(--on-surface);
   background: var(--surface);
 }
@@ -130,6 +132,9 @@ select:disabled {
 .icon {
   display: inline-block;
   flex: none;
+  inline-size: 1em;
+  block-size: 1em;
+  overflow: hidden;
   font-family: "Material Symbols Rounded", sans-serif;
   font-feature-settings: "liga";
   font-size: 24px;
@@ -144,33 +149,24 @@ select:disabled {
 .app-bar-inner,
 .screen {
   width: min(100%, var(--content-width));
-  padding-inline: clamp(1.125rem, 5vw, 1.75rem);
+  padding-inline: var(--page-gutter);
   margin-inline: auto;
 }
 
 .app-bar-inner {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  height: 4.5rem;
-}
-
-.brand {
-  font-size: 1.125rem;
-  font-weight: 600;
-  letter-spacing: -0.0125em;
-}
-
-.settings-button {
-  margin-inline-start: auto;
+  justify-content: space-between;
+  padding-block: 0.5rem;
 }
 
 .screen {
-  padding-block: 0.375rem 2rem;
+  padding-block: 0.5rem var(--page-gutter);
 }
 
 .stack {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   gap: 1rem;
 }
@@ -225,7 +221,6 @@ p.muted:empty {
   background: transparent;
 }
 
-.settings-button,
 .tonal {
   color: var(--on-primary-container);
   background-color: var(--secondary-container);
@@ -279,55 +274,25 @@ p.muted:empty {
 .hero {
   position: relative;
   isolation: isolate;
-  display: grid;
-  align-items: end;
-  min-height: 14.25rem;
   overflow: hidden;
-  padding: 1.5rem;
-  border-radius: 1.75rem;
+  display: grid;
+  gap: 0.75rem;
+  padding: var(--panel-padding);
+  border-radius: 1.25rem;
   background: #e1f5fe;
   color: var(--on-primary-container);
 }
 
-.hero.active {
-  background: var(--primary-container);
-}
-
-.hero-content {
-  display: grid;
-  justify-items: start;
-  gap: 0.6rem;
-}
-
-.hero-status {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--primary);
-}
-
-.hero h1 {
-  max-inline-size: 13rem;
-  font-size: clamp(1.75rem, 7vw, 2.125rem);
-}
-
-.hero-content .button {
-  margin-top: 0.625rem;
-}
-
-.hero-art {
+.hero::before {
+  content: "";
   position: absolute;
   z-index: -1;
-  display: grid;
-  place-items: center;
+  pointer-events: none;
   inline-size: 14rem;
   block-size: 14rem;
-  inset-block-start: -1.75rem;
-  inset-inline-end: -3rem;
-}
-
-.signal-rings {
-  position: absolute;
-  inset: 0;
+  inset-inline-start: 60%;
+  inset-block-start: 50%;
+  translate: -50% -50%;
   border: 1px solid rgb(2 136 209 / 18%);
   border-radius: 50%;
   background: repeating-radial-gradient(
@@ -339,22 +304,31 @@ p.muted:empty {
   mask-image: radial-gradient(circle, #000 48%, rgb(0 0 0 / 45%) 100%);
 }
 
-.hero-symbol {
+.hero.active {
+  background: var(--primary-container);
+}
+
+.hero h1 {
+  font-size: 1.5rem;
+}
+
+.connection-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.connection-state {
   display: grid;
-  place-items: center;
-  inline-size: 4.5rem;
-  block-size: 4.5rem;
-  border-radius: 1.5rem;
-  background-color: #b3e5fc;
+  gap: 0.25rem;
+}
+
+.hero-status {
+  font-size: 0.9375rem;
+  font-weight: 600;
   color: var(--primary);
-}
-
-.hero.active .hero-symbol {
-  background-color: #81d4fa;
-}
-
-.hero-symbol .icon {
-  font-size: 34px;
 }
 
 .device-count {
@@ -376,7 +350,8 @@ p.muted:empty {
 }
 
 .panel {
-  padding: 1rem;
+  overflow-wrap: anywhere;
+  padding: var(--panel-padding);
 }
 
 .list-button {
@@ -385,7 +360,7 @@ p.muted:empty {
   gap: 0.875rem;
   width: 100%;
   min-height: 3.75rem;
-  padding: 0.625rem 0.875rem;
+  padding: 0.625rem var(--panel-padding);
   text-align: start;
   border: 0;
 }
@@ -425,15 +400,149 @@ p.muted:empty {
   font-weight: 500;
 }
 
+.profile-group {
+  background: var(--surface-container);
+  border-radius: 1.25rem;
+}
+
+.profile-group-header {
+  display: flex;
+  align-items: center;
+  padding: 0.5rem;
+  min-height: 3.625rem;
+}
+
+.profile-group-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.profile-group h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.profile-group-header > h3,
+.profile-group-info {
+  padding-inline-start: 0.5rem;
+}
+
+.profile-group-info small,
+.profile-name small {
+  display: block;
+  color: var(--on-surface-variant);
+  font-size: 0.75rem;
+}
+
+.profile-group-empty {
+  padding: 0 1rem 0.875rem;
+}
+
 .profile-list {
-  display: grid;
-  gap: 0.375rem;
   padding: 0;
   list-style: none;
 }
 
+.profile-row {
+  display: flex;
+  align-items: center;
+  padding-inline-end: 0.5rem;
+  border-top: 1px solid var(--outline-variant);
+}
+
+.profile-row:last-child {
+  border-radius: 0 0 1.25rem 1.25rem;
+}
+
+.profile-row.selected {
+  background: var(--secondary-container);
+  color: var(--on-primary-container);
+}
+
+.profile-select {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  border-radius: inherit;
+  text-align: start;
+  padding: 0.5rem 0.625rem 0.5rem var(--panel-padding);
+}
+
+.profile-select:hover:not(:disabled) {
+  background: var(--surface-high);
+}
+
+.profile-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.profile-latency {
+  color: var(--primary);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.profile-latency.unreachable,
+button.danger-action {
+  color: var(--error);
+}
+
+.action-menu {
+  flex: none;
+  position: relative;
+}
+
+.action-menu-items {
+  position: absolute;
+  z-index: 2;
+  inset-inline-end: 0;
+  inset-block-start: calc(100% + 0.25rem);
+  width: max-content;
+  max-width: calc(100vw - 2 * var(--page-gutter));
+  padding: 0.375rem;
+  border: 1px solid var(--outline-variant);
+  border-radius: 1rem;
+  background: var(--surface-low);
+  box-shadow: 0 0.375rem 1.25rem rgb(24 35 44 / 15%);
+}
+
+.action-menu-items button {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  width: 100%;
+  padding: 0.625rem 0.75rem;
+  border: 0;
+  border-radius: 0.625rem;
+  font-size: 0.875rem;
+  background: transparent;
+  text-align: start;
+}
+
+.action-menu-items button:hover {
+  background: var(--surface-high);
+}
+
+.action-menu-items .icon {
+  font-size: 20px;
+}
+
+.config-editor {
+  font-family: ui-monospace, monospace;
+  font-size: 0.875rem;
+  resize: vertical;
+}
+
 .credential-card {
-  padding-inline: 0.875rem;
+  padding-inline: var(--panel-padding);
 }
 
 .credential {
@@ -471,6 +580,7 @@ p.muted:empty {
 
 .field {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.25rem;
 }
 
@@ -553,7 +663,7 @@ textarea {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: start;
   gap: 0.75rem;
-  padding: 0.875rem 1rem;
+  padding: 0.875rem var(--panel-padding);
   border-radius: 1.25rem;
   background: var(--secondary-container);
   color: var(--on-primary-container);
@@ -638,7 +748,7 @@ textarea {
 }
 
 dialog {
-  width: min(calc(100% - 2rem), 28rem);
+  width: min(calc(100% - 2 * var(--page-gutter)), 28rem);
   max-height: calc(100% - 2rem);
   padding: 1.5rem;
   border: 0;
@@ -679,17 +789,6 @@ dialog h2 {
   pointer-events: none;
 }
 
-@media (max-width: 25rem) {
-  .hero {
-    padding: 1.125rem;
-  }
-
-  .hero-art {
-    inset-inline-end: -4.25rem;
-    inset-block-start: -2.75rem;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .button,
   .icon-button {
@@ -719,7 +818,6 @@ dialog h2 {
 @media (prefers-reduced-motion: no-preference) {
   .screen > h1,
   .screen > form,
-  .screen > .profile-list,
   .hero,
   .notice,
   .snackbar.visible,
@@ -731,17 +829,24 @@ dialog h2 {
     animation: backdrop-enter 180ms ease-out;
   }
 
-  .hero.connecting .signal-rings {
-    animation: signal-pulse 1.3s ease-in-out infinite alternate;
-  }
-
-  .hero.active .hero-symbol {
-    animation: signal-settle 320ms ease-out;
-  }
-
   .button:active:not(:disabled),
   .icon-button:active:not(:disabled) {
     transform: scale(0.96);
+  }
+
+  .hero.connecting::before {
+    animation: signal-pulse 1.3s ease-in-out infinite alternate;
+  }
+
+  @keyframes signal-pulse {
+    from {
+      opacity: 0.55;
+      transform: scale(0.94);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1.04);
+    }
   }
 
   @keyframes surface-enter {
@@ -761,29 +866,6 @@ dialog h2 {
     }
     to {
       opacity: 1;
-    }
-  }
-
-  @keyframes signal-pulse {
-    from {
-      opacity: 0.55;
-      transform: scale(0.94);
-    }
-    to {
-      opacity: 1;
-      transform: scale(1.04);
-    }
-  }
-
-  @keyframes signal-settle {
-    0% {
-      transform: scale(0.9);
-    }
-    65% {
-      transform: scale(1.05);
-    }
-    100% {
-      transform: scale(1);
     }
   }
 }

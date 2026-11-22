@@ -10,5 +10,6 @@ pub mod net;
 pub mod os;
 mod pe;
 pub mod tauri_api;
-pub mod telemetry;
+#[cfg(any(windows, test))]
+mod telemetry;
 pub mod ui;

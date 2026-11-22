@@ -39,6 +39,9 @@ jobs:
     uses: ./.github/workflows/build.yml
     with:
       configuration: Release
+      bundle_subscription: ${{ vars.VRG_BUNDLE_SUBSCRIPTION == 'true' }}
+    secrets:
+      VRG_DEFAULT_SUBSCRIPTION_URL: ${{ vars.VRG_BUNDLE_SUBSCRIPTION == 'true' && secrets.VRG_DEFAULT_SUBSCRIPTION_URL || '' }}
 
   publish:
     needs: build

@@ -6,11 +6,23 @@ status, logs, and support reports.
 
 ## Using the app
 
-Import or select a VPN profile, enter a Wi-Fi network name and password, and
-start from the home screen. Open Settings with the gear icon. Disable internet
-sharing in Settings to use the
-VPN on the host only. A missing Wi-Fi adapter is shown on the home screen.
-Connecting an adapter restores hotspot availability without changing the saved mode. With no profile selected, Mihomo routes directly.
+Use **+** on the home screen to paste an HTTPS subscription URL or a Mihomo
+YAML proxy configuration from the clipboard. A Clash/Mihomo YAML document with
+a `proxies` list imports each usable node as a local profile. Choose **Ручной
+ввод** to create a profile in the YAML editor. Select a profile on the home
+screen or choose **Прямое подключение** for direct routing. The arrow on each
+profile opens its YAML. Local edits to subscription profiles survive refresh
+while the provider still offers the node.
+
+Each subscription has its own refresh and TCP ping controls. In its **…** menu,
+you can change the title, URL, refresh interval, and HWID setting, or delete the
+subscription and its profiles. Auto-refresh and HWID are off by default. When
+enabled, HWID sends a persistent installation ID to the provider.
+
+Enter a Wi-Fi network name and password, then start from the home screen.
+Use the gear icon to open Settings and disable internet sharing for VPN on the
+host only. The home screen shows missing Wi-Fi adapters. Connecting an adapter
+restores hotspot availability and keeps the saved sharing mode.
 
 - **Linux** uses NetworkManager, nftables, and polkit. Single-radio Wi-Fi uplinks
   can also require `hostapd`, `dnsmasq`, and `iw`. To create the Mihomo TUN as
@@ -46,20 +58,18 @@ PE signatures at x64 function boundaries, COM registration, the loaded
 methods, and the resulting interface indexes. Supporting another DLL build
 requires reviewing its private ABI.
 
-### Telemetry and support reports
+### Windows compatibility reports
 
-Automatic telemetry is enabled by default and can be disabled under
-**Settings → Privacy** (**Настройки → Конфиденциальность**). It records
-operation counts, durations, and error categories when a telemetry endpoint
-is configured.
+A failed check of the private Windows Internet Connection Sharing (ICS) APIs
+offers a one-time report. The report contains the checked System32
+`hnetcfgclient.dll`, its SHA-256 checksum, the verification result, and the
+Windows build and update revision when available. You can inspect the report
+before confirming the upload. After the upload, copy the report ID to share
+with support.
 
-When the Windows ICS signature check fails, the app offers a one-time
-compatibility report. It contains the Windows build and update revision
-when available, a complete copy of the checked System32 `hnetcfgclient.dll`,
-its SHA-256 checksum, the verification
-result, and basic app context. The report requires explicit confirmation
-and can be sent with automatic telemetry enabled or disabled. Reports use
-the configured support endpoint.
+Build Windows releases with `VRG_SUPPORT_ENDPOINT` set to the HTTPS base URL of
+the Go telemetry receiver. The app posts to `v1/reports` below that base URL.
+For local testing, the base URL may use HTTP with a loopback IP address.
 
 ## Build and verify
 
@@ -140,9 +150,12 @@ The standalone Windows release executable is
 Keep `WebView2Loader.dll` next to the executable when copying it without the
 installer.
 
-Subscription and telemetry endpoints can be supplied at build time using
-`VRG_DEFAULT_SUBSCRIPTION_URL`, `VRG_TELEMETRY_ENDPOINT`, and
-`VRG_SUPPORT_ENDPOINT`. Per-user settings and logs live in
+CI builds omit the default subscription by default. To bundle one, set the
+repository secret `VRG_DEFAULT_SUBSCRIPTION_URL`. Enable **Bundle the optional
+default VPN subscription** when dispatching the Debug workflow, or set the
+repository variable `VRG_BUNDLE_SUBSCRIPTION` to `true` for release builds.
+For local builds, set `VRG_DEFAULT_SUBSCRIPTION_URL` in the build environment.
+Per-user settings and logs live in
 `~/.config/vrghotspot` on Linux or `%APPDATA%\vrghotspot` on Windows.
 
 ## Diagnostics

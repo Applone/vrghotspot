@@ -161,7 +161,7 @@ build_container() {
         -e "CARGO_TARGET_DIR=/work/.container-target/$format" \
         -e GOCACHE=/work/.buildcache/go-build -e GOPATH=/work/.buildcache/go \
         -e "BUILD_CONFIGURATION=$profile" -e CARGO_PROFILE_DEV_DEBUG -e CARGO_INCREMENTAL \
-        -e VRG_DEFAULT_SUBSCRIPTION_URL -e VRG_TELEMETRY_ENDPOINT -e VRG_SUPPORT_ENDPOINT \
+        -e VRG_DEFAULT_SUBSCRIPTION_URL -e VRG_SUPPORT_ENDPOINT \
         "$image" bash scripts/local_build.sh "${options[@]}"
 }
 

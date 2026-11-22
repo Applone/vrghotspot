@@ -11,9 +11,7 @@ use tracing_appender::non_blocking::{NonBlocking, WorkerGuard};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use vrghotspot::app::{AppSettings, HotspotController, telemetry_identity_path};
-use vrghotspot::telemetry::Telemetry;
-
+use vrghotspot::app::{AppSettings, HotspotController};
 use vrghotspot::tauri_api::{self, TauriState};
 use vrghotspot::ui::events::TauriEventSink;
 use vrghotspot::ui::logs::{InMemoryLogLayer, InMemoryLogStore};
@@ -44,8 +42,7 @@ fn main() {
     };
     // `_core_log_guard` flushes the non-blocking file writer on drop; keep it
     // alive for the whole process so buffered core logs are not lost on exit.
-    let telemetry = Telemetry::from_env(telemetry_identity_path());
-    let (logs, _core_log_guard) = init_logging(telemetry.clone());
+    let (logs, _core_log_guard) = init_logging();
     install_panic_logging();
     #[cfg(windows)]
     if let Some(error) = elevation {
@@ -59,7 +56,7 @@ fn main() {
     }
 
     #[cfg(feature = "cli")]
-    if let Some(code) = vrghotspot::cli::maybe_run(telemetry.clone()) {
+    if let Some(code) = vrghotspot::cli::maybe_run() {
         drop(_core_log_guard);
         std::process::exit(code);
     }
@@ -74,23 +71,18 @@ fn main() {
     info!(message = startup_message, "application startup");
 
     let event_bridge = TauriEventSink::default();
-    let app = Arc::new(HotspotController::with_telemetry(
-        settings.clone(),
+    let app = Arc::new(HotspotController::with_event_sink(
+        settings,
         event_bridge.clone(),
-        telemetry.clone(),
     ));
 
     if autostart_enabled() {
         info!("VRG_AUTOSTART is enabled, starting hotspot from CLI compatibility path");
         let runtime = tokio::runtime::Runtime::new().expect("failed to create Tokio runtime");
         runtime.block_on(async {
-            if let Err(err) = app.initialize_telemetry().await {
-                tracing::warn!(error = %err, "telemetry is unavailable; application will continue locally");
-            }
             if let Err(err) = app.run_once().await {
                 error!(error = %err, "autostart failed");
             }
-            telemetry.shutdown().await;
         });
     } else {
         run_interactive(app.clone(), logs.clone(), event_bridge);
@@ -108,22 +100,28 @@ fn run_interactive(
         "starting Tauri GUI"
     );
 
-    let startup_app = app.clone();
     let shutdown_app = app.clone();
-    let telemetry = app.telemetry().clone();
+    let subscriptions = app.clone();
     let result = tauri::Builder::default()
         .manage(TauriState::new(app, logs))
         .invoke_handler(tauri::generate_handler![
             tauri_api::get_snapshot,
             tauri_api::get_settings,
             tauri_api::save_settings,
-            tauri_api::set_telemetry_enabled,
-            tauri_api::prepare_support_report,
             #[cfg(windows)]
             tauri_api::prepare_ics_report,
-            tauri_api::send_support_report,
-            tauri_api::discard_support_report,
-            tauri_api::import_subscription,
+            #[cfg(windows)]
+            tauri_api::send_ics_report,
+            #[cfg(windows)]
+            tauri_api::discard_ics_report,
+            tauri_api::read_clipboard,
+            tauri_api::import_profiles,
+            tauri_api::get_profile_yaml,
+            tauri_api::save_profile_yaml,
+            tauri_api::add_subscription,
+            tauri_api::update_subscription,
+            tauri_api::delete_subscription,
+            tauri_api::ping_subscription,
             tauri_api::refresh_subscription,
             tauri_api::complete_onboarding,
             tauri_api::select_profile,
@@ -138,10 +136,9 @@ fn run_interactive(
         ])
         .setup(move |tauri_app| {
             event_bridge.attach(tauri_app.handle().clone());
+            let subscriptions = subscriptions.clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(err) = startup_app.initialize_telemetry().await {
-                    tracing::warn!(error = %err, "telemetry is unavailable; application will continue locally");
-                }
+                subscriptions.run_subscription_updates().await;
             });
             if let Some(window) = tauri_app.get_webview_window("main") {
                 let _ = window.set_title("VRG Hotspot");
@@ -161,7 +158,6 @@ fn run_interactive(
                     if let Err(err) = app.stop_hotspot().await {
                         error!(error = %err, "failed to stop hotspot during shutdown");
                     }
-                    app.telemetry().shutdown().await;
                     if let Err(err) = window.destroy() {
                         error!(error = %err, "failed to close the window after shutdown");
                     }
@@ -170,13 +166,12 @@ fn run_interactive(
         })
         .run(tauri::generate_context!());
 
-    tauri::async_runtime::block_on(telemetry.shutdown());
     if let Err(err) = result {
         error!(error = %err, "Tauri GUI exited with an error");
     }
 }
 
-fn init_logging(telemetry: Telemetry) -> (InMemoryLogStore, Option<WorkerGuard>) {
+fn init_logging() -> (InMemoryLogStore, Option<WorkerGuard>) {
     let logs = InMemoryLogStore::default();
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
@@ -189,7 +184,7 @@ fn init_logging(telemetry: Telemetry) -> (InMemoryLogStore, Option<WorkerGuard>)
 
     tracing_subscriber::registry()
         .with(filter)
-        .with(InMemoryLogLayer::with_telemetry(logs.clone(), telemetry))
+        .with(InMemoryLogLayer::new(logs.clone()))
         .with(
             tracing_subscriber::fmt::layer()
                 .with_ansi(false)

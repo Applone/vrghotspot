@@ -8,12 +8,12 @@
     SSID_LIMIT,
   } from '../lib/credentials';
 
+  import { subscriptionTitle } from '../lib/profiles';
+
   let {
     snapshot,
     busy,
-    telemetryBusy,
     conflicts,
-    onTelemetry,
     onSave,
     onClearLogs,
     onScan,
@@ -21,9 +21,7 @@
   }: {
     snapshot: AppSnapshot;
     busy: boolean;
-    telemetryBusy: boolean;
     conflicts: ConflictReport | null;
-    onTelemetry: (enabled: boolean) => void;
     onSave: (next: AppSettings) => void;
     onClearLogs: () => void;
     onScan: () => void;
@@ -35,13 +33,11 @@
   const savedPassword = $derived(settings.hotspot_passphrase);
   const savedAdapter = $derived(settings.hotspot_wifi_interface ?? '');
   const savedSharing = $derived(settings.enable_sharing);
-  const savedSubscription = $derived(settings.subscription_url);
 
   let ssid = $state(untrack(() => savedSsid));
   let password = $state(untrack(() => savedPassword));
   let adapter = $state(untrack(() => savedAdapter));
   let sharing = $state(untrack(() => savedSharing));
-  let subscription = $state(untrack(() => savedSubscription));
 
   $effect(() => {
     ssid = savedSsid;
@@ -55,9 +51,6 @@
   $effect(() => {
     sharing = savedSharing;
   });
-  $effect(() => {
-    subscription = savedSubscription;
-  });
 
   const locked = $derived(snapshot.status !== 'Stopped');
   const validation = $derived(
@@ -67,8 +60,7 @@
     ssid !== savedSsid ||
       password !== savedPassword ||
       adapter !== savedAdapter ||
-      sharing !== savedSharing ||
-      subscription !== savedSubscription,
+      sharing !== savedSharing,
   );
   const adapters = $derived(snapshot.hotspot_adapters ?? snapshot.adapters);
   const radios = $derived(adapters.filter(({ kind }) => kind === 'WiFi'));
@@ -76,7 +68,6 @@
   const missingAdapter = $derived(
     adapter && !adapters.some(({ id }) => id === adapter),
   );
-  const info = $derived(settings.subscription_info);
   const logs = $derived(snapshot.logs.slice(-60).reverse());
   const trafficUnits = ['Б', 'КиБ', 'МиБ', 'ГиБ', 'ТиБ'];
   const number = new Intl.NumberFormat('ru', { maximumFractionDigits: 1 });
@@ -103,7 +94,6 @@
       hotspot_passphrase: password,
       hotspot_wifi_interface: adapter || null,
       enable_sharing: sharing,
-      subscription_url: subscription.trim(),
     });
   }
 </script>
@@ -186,99 +176,50 @@
     </div>
   </section>
 
-  <section class="stack compact" aria-labelledby="privacy-settings">
-    <h2 id="privacy-settings">Конфиденциальность</h2>
-    <div class="panel stack compact">
-      <label class="switch-row">
-        <span>
-          <strong>Автоматическая телеметрия</strong>
-          <small>
-            Статистика запусков, подключений и категорий ошибок. Включена по
-            умолчанию.
-          </small>
-        </span>
-        <input
-          role="switch"
-          type="checkbox"
-          aria-checked={settings.telemetry_enabled}
-          checked={settings.telemetry_enabled}
-          disabled={telemetryBusy ||
-            busy ||
-            (!snapshot.telemetry.configured && !settings.telemetry_enabled)}
-          onchange={(event) => onTelemetry(event.currentTarget.checked)}
-        >
-      </label>
-      <p class="muted" role="status">
-        {#if telemetryBusy}
-          Сохранение настройки…
-        {:else if !snapshot.telemetry.configured}
-          Сервер телеметрии не настроен.
-        {:else if !settings.telemetry_enabled}
-          Автоматическая отправка отключена.
-        {:else if !snapshot.telemetry.active ||
-          snapshot.telemetry.consecutive_failures > 0}
-          Доставка телеметрии пока не подтверждена.
-        {/if}
-      </p>
-    </div>
-  </section>
-
-  {#if info.title ||
-    info.announce ||
-    info.support_url ||
-    info.download_bytes != null ||
-    info.total_bytes != null ||
-    info.expires_at != null}
+  {#if settings.subscriptions.length}
     <section class="stack compact">
-      <h2>Подписка VPN</h2>
-      <div class="panel stack compact">
-        {#if info.title}
-          <strong>{info.title}</strong>
-        {/if}
-        {#if info.announce}
-          <p class="announcement">{info.announce}</p>
-        {/if}
-        <dl class="facts">
-          {#if info.download_bytes != null}
-            <div>
-              <dt>Получено</dt>
-              <dd>{traffic(info.download_bytes)}</dd>
-            </div>
+      <h2>Подписки VPN</h2>
+      {#each settings.subscriptions as subscription (subscription.id)}
+        {@const info = subscription.info}
+        <div class="panel stack compact">
+          <strong>{subscriptionTitle(subscription)}</strong>
+          {#if info.announce}
+            <p class="announcement">{info.announce}</p>
           {/if}
-          {#if info.total_bytes != null}
-            <div>
-              <dt>Лимит</dt>
-              <dd>{traffic(info.total_bytes)}</dd>
-            </div>
-          {/if}
-          {#if info.expires_at != null}
-            <div>
-              <dt>Действует до</dt>
-              <dd>{date.format(info.expires_at * 1000)}</dd>
-            </div>
-          {/if}
-          {#if info.support_url}
-            <div>
-              <dt>Поддержка</dt>
-              <dd>{info.support_url}</dd>
-            </div>
-          {/if}
-        </dl>
-      </div>
+          <dl class="facts">
+            {#if info.download_bytes != null}
+              <div>
+                <dt>Получено</dt>
+                <dd>{traffic(info.download_bytes)}</dd>
+              </div>
+            {/if}
+            {#if info.total_bytes != null}
+              <div>
+                <dt>Лимит</dt>
+                <dd>{traffic(info.total_bytes)}</dd>
+              </div>
+            {/if}
+            {#if info.expires_at != null}
+              <div>
+                <dt>Действует до</dt>
+                <dd>{date.format(info.expires_at * 1000)}</dd>
+              </div>
+            {/if}
+            {#if info.support_url}
+              <div>
+                <dt>Поддержка</dt>
+                <dd>{info.support_url}</dd>
+              </div>
+            {/if}
+          </dl>
+        </div>
+      {/each}
     </section>
   {/if}
 
   <details class="panel settings-disclosure">
     <summary>Дополнительные настройки</summary>
     <div class="stack">
-      <label class="field">
-        <span>Адрес подписки</span>
-        <input
-          bind:value={subscription}
-          disabled={locked || busy}
-          spellcheck="false"
-        >
-      </label>
       <div class="actions">
         <button
           class="button tonal"

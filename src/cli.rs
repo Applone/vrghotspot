@@ -18,41 +18,30 @@ use crate::app::{AppSettings, HotspotController};
 use crate::os::hotspot::{
     AdapterKind, HotspotController as SystemHotspotController, NetworkAdapter,
 };
-use crate::telemetry::Telemetry;
 use crate::ui::events::{UiEvent, UiEventSink};
 
 type CliResult = Result<(), String>;
 
 /// Returns `Some(exit_code)` when invoked as `cli ...`, otherwise `None` so the
 /// caller falls through to the normal GUI path.
-pub fn maybe_run(telemetry: Telemetry) -> Option<i32> {
+pub fn maybe_run() -> Option<i32> {
     let mut args = std::env::args().skip(1);
     if args.next().as_deref() != Some("cli") {
         return None;
     }
     let command = args.next().unwrap_or_else(|| "help".to_owned());
     let runtime = tokio::runtime::Runtime::new().expect("failed to create Tokio runtime");
-    Some(runtime.block_on(async {
-        if let Err(error) = telemetry
-            .set_enabled(AppSettings::load_or_env().telemetry_enabled)
-            .await
-        {
-            tracing::warn!(error = %error, "telemetry is unavailable; continuing locally");
-        }
-        let result = dispatch(&command, &telemetry).await;
-        telemetry.shutdown().await;
-        result
-    }))
+    Some(runtime.block_on(dispatch(&command)))
 }
 
-async fn dispatch(command: &str, telemetry: &Telemetry) -> i32 {
+async fn dispatch(command: &str) -> i32 {
     let result = match command {
         "adapters" => cmd_adapters(),
         "hotspot-status" => cmd_hotspot_status(),
         "net" => cmd_net().await,
-        "tun-only" => cmd_tun_only(telemetry).await,
-        "start" => cmd_start(telemetry).await,
-        "stop" => cmd_stop(telemetry).await,
+        "tun-only" => cmd_tun_only().await,
+        "start" => cmd_start().await,
+        "stop" => cmd_stop().await,
         other => {
             eprintln!("unknown cli command: {other}");
             print_help();
@@ -150,7 +139,7 @@ async fn cmd_net() -> CliResult {
     Ok(())
 }
 
-async fn cmd_tun_only(telemetry: &Telemetry) -> CliResult {
+async fn cmd_tun_only() -> CliResult {
     let mut settings = AppSettings::load_or_env();
     settings.enable_sharing = false;
     println!(
@@ -158,7 +147,7 @@ async fn cmd_tun_only(telemetry: &Telemetry) -> CliResult {
         settings.describe_for_logs()
     );
 
-    let controller = spawn_controller(settings, telemetry.clone());
+    let controller = spawn_controller(settings);
     controller
         .start_hotspot()
         .await
@@ -178,10 +167,10 @@ async fn cmd_tun_only(telemetry: &Telemetry) -> CliResult {
     Ok(())
 }
 
-async fn cmd_start(telemetry: &Telemetry) -> CliResult {
+async fn cmd_start() -> CliResult {
     let settings = AppSettings::load_or_env();
     println!("full start: {}", settings.describe_for_logs());
-    let controller = spawn_controller(settings, telemetry.clone());
+    let controller = spawn_controller(settings);
     controller
         .start_hotspot()
         .await
@@ -202,9 +191,9 @@ async fn cmd_start(telemetry: &Telemetry) -> CliResult {
     Ok(())
 }
 
-async fn cmd_stop(telemetry: &Telemetry) -> CliResult {
+async fn cmd_stop() -> CliResult {
     println!("best-effort teardown of hotspot state...");
-    let controller = spawn_controller(AppSettings::load_or_env(), telemetry.clone());
+    let controller = spawn_controller(AppSettings::load_or_env());
     controller
         .stop_hotspot()
         .await
@@ -213,10 +202,7 @@ async fn cmd_stop(telemetry: &Telemetry) -> CliResult {
     Ok(())
 }
 
-fn spawn_controller(
-    settings: AppSettings,
-    telemetry: Telemetry,
-) -> Arc<HotspotController<UiEventSink>> {
+fn spawn_controller(settings: AppSettings) -> Arc<HotspotController<UiEventSink>> {
     let sink = UiEventSink::default();
     let mut receiver = sink.subscribe();
     tokio::spawn(async move {
@@ -224,7 +210,7 @@ fn spawn_controller(
             print_event(&event);
         }
     });
-    Arc::new(HotspotController::with_telemetry(settings, sink, telemetry))
+    Arc::new(HotspotController::with_event_sink(settings, sink))
 }
 
 fn print_event(event: &UiEvent) {

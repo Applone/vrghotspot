@@ -5,6 +5,11 @@ on:
     branches: ['**']
   pull_request:
   workflow_dispatch:
+    inputs:
+      bundle_subscription:
+        description: Bundle the optional default VPN subscription
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -18,3 +23,6 @@ jobs:
     uses: ./.github/workflows/build.yml
     with:
       configuration: Debug
+      bundle_subscription: ${{ github.event_name == 'workflow_dispatch' && inputs.bundle_subscription }}
+    secrets:
+      VRG_DEFAULT_SUBSCRIPTION_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.bundle_subscription && secrets.VRG_DEFAULT_SUBSCRIPTION_URL || '' }}

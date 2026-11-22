@@ -5,9 +5,8 @@ use std::process::Command;
 fn main() {
     // The bundled subscription address is compiled in from the environment, so a
     // changed secret has to invalidate the build. The same applies to the
-    // telemetry and support endpoints baked into the binary.
+    // Windows compatibility report endpoint baked into the binary.
     println!("cargo:rerun-if-env-changed=VRG_DEFAULT_SUBSCRIPTION_URL");
-    println!("cargo:rerun-if-env-changed=VRG_TELEMETRY_ENDPOINT");
     println!("cargo:rerun-if-env-changed=VRG_SUPPORT_ENDPOINT");
     println!("cargo:rerun-if-changed=src/third_party/core_bridge");
     println!("cargo:rerun-if-changed=src/third_party/mihomo");

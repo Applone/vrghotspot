@@ -11,6 +11,7 @@ pub use linux::*;
 #[cfg(target_os = "windows")]
 pub use windows::*;
 
+#[cfg(any(windows, test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum IcsMismatchReason {

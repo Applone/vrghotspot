@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { type Snippet, untrack } from 'svelte';
   import Icon from '../components/Icon.svelte';
   import Notice from '../components/Notice.svelte';
   import WifiQr from '../components/WifiQr.svelte';
@@ -9,7 +9,6 @@
     PASSWORD_MAX,
     SSID_LIMIT,
   } from '../lib/credentials';
-  import { medallionText, parseProfile } from '../lib/profiles';
 
   let {
     snapshot,
@@ -18,7 +17,7 @@
     stopping,
     onStart,
     onStop,
-    onProfiles,
+    profilesContent,
     onCopy,
   }: {
     snapshot: AppSnapshot;
@@ -27,7 +26,7 @@
     stopping: boolean;
     onStart: (ssid: string, password: string) => void;
     onStop: () => void;
-    onProfiles: () => void;
+    profilesContent: Snippet;
     onCopy: (value: string) => void;
   } = $props();
 
@@ -52,7 +51,6 @@
       (profile) => profile.id === snapshot.settings.selected_profile_id,
     ),
   );
-  const profile = $derived(selected && parseProfile(selected));
 
   const missingUplink = $derived(!snapshot.uplink.any_uplink);
   const missingWifi = $derived(sharing && !snapshot.has_physical_wifi_adapter);
@@ -64,7 +62,6 @@
         : null,
   );
   const accessPoint = $derived(sharing || snapshot.sharing_active);
-  const title = $derived(accessPoint ? 'Точка доступа Wi-Fi' : 'Подключение');
   const statusLabel = $derived(
     stopping || snapshot.status === 'Stopping'
       ? 'Остановка…'
@@ -92,24 +89,23 @@
   class="hero"
   class:active={snapshot.sharing_active}
   class:connecting={starting || snapshot.status === 'Starting'}
-  aria-labelledby="hotspot-title"
+  aria-label={accessPoint ? 'Точка доступа Wi-Fi' : 'Состояние подключения'}
 >
-  <div class="hero-art" aria-hidden="true">
-    <div class="signal-rings"></div>
-    <span class="hero-symbol">
-      <Icon name={accessPoint ? 'wifi_tethering' : 'lan'} />
-    </span>
-  </div>
-  <div class="hero-content">
-    <h1 id="hotspot-title">{title}</h1>
-    <p class="hero-status" aria-live="polite">{statusLabel}</p>
-    {#if snapshot.sharing_active && snapshot.connected_clients != null}
-      <p class="device-count">
-        <Icon name="devices" />
-        {snapshot.connected_clients}
-        {deviceForms[plural.select(snapshot.connected_clients)] ?? 'устройств'}
-      </p>
-    {/if}
+  {#if accessPoint}
+    <h1>Точка доступа Wi-Fi</h1>
+  {/if}
+  <div class="connection-controls">
+    <div class="connection-state">
+      <p class="hero-status" aria-live="polite">{statusLabel}</p>
+      {#if snapshot.sharing_active && snapshot.connected_clients != null}
+        <p class="device-count">
+          <Icon name="devices" />
+          {snapshot.connected_clients}
+          {deviceForms[plural.select(snapshot.connected_clients)] ??
+            'устройств'}
+        </p>
+      {/if}
+    </div>
     {#if running || starting || snapshot.status !== 'Stopped' || stopping}
       <button
         type="button"
@@ -147,27 +143,7 @@
   </Notice>
 {/if}
 
-<section class="stack compact">
-  <h2>Профиль VPN</h2>
-  <button
-    type="button"
-    class="list-button"
-    disabled={!editable}
-    onclick={onProfiles}
-  >
-    <span class="list-icon">
-      {#if profile}
-        {medallionText(profile)}
-      {:else}
-        <Icon name="public" />
-      {/if}
-    </span>
-    <span class="list-label">{profile?.label ?? 'Прямое подключение'}</span>
-    {#if editable}
-      <Icon name="chevron_right" />
-    {/if}
-  </button>
-</section>
+{@render profilesContent()}
 
 {#if sharing || snapshot.sharing_active}
   <section class="stack compact" aria-labelledby="wifi-title">

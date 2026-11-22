@@ -1,12 +1,13 @@
 use crate::app::{AppError, AppSettings, HotspotController, HotspotStatus};
+use crate::config::subscription::SubscriptionOptions;
 use crate::os::conflicts::ConflictScanner;
 use crate::os::hotspot::{NetworkAdapter, UplinkStatus};
-use crate::telemetry::ReportReceipt;
-use crate::telemetry::reports::{ReportManager, ReportPreview};
-use crate::telemetry::{ErrorKind, Operation, TelemetryStatus};
+#[cfg(windows)]
+use crate::telemetry::reports::{ReportManager, ReportPreview, ReportReceipt};
 use crate::ui::events::TauriEventSink;
 use crate::ui::logs::{AppLogLevel, InMemoryLogStore};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 use tauri::State;
@@ -16,7 +17,8 @@ use uuid::Uuid;
 pub struct TauriState {
     pub controller: Arc<HotspotController<TauriEventSink>>,
     pub logs: InMemoryLogStore,
-    pub reports: ReportManager,
+    #[cfg(windows)]
+    reports: ReportManager,
 }
 
 impl TauriState {
@@ -24,7 +26,8 @@ impl TauriState {
         Self {
             controller,
             logs,
-            reports: ReportManager::from_env(),
+            #[cfg(windows)]
+            reports: ReportManager::from_build(),
         }
     }
 }
@@ -44,7 +47,6 @@ pub struct AppSnapshot {
     pub sharing_active: bool,
     pub ics_signature_mismatch: bool,
     pub logs: Vec<LogEntryDto>,
-    pub telemetry: TelemetryStatus,
     pub reports_configured: bool,
 }
 
@@ -92,8 +94,10 @@ pub async fn get_snapshot(state: State<'_, TauriState>) -> Result<AppSnapshot, S
         #[cfg(not(windows))]
         ics_signature_mismatch: false,
         logs: log_entries(&state.logs, AppLogLevel::Debug),
-        telemetry: state.controller.telemetry().status(),
+        #[cfg(windows)]
         reports_configured: state.reports.configured(),
+        #[cfg(not(windows))]
+        reports_configured: false,
     })
 }
 
@@ -115,38 +119,6 @@ pub async fn save_settings(
     Ok(state.controller.settings().await)
 }
 
-#[tauri::command]
-pub async fn set_telemetry_enabled(
-    state: State<'_, TauriState>,
-    enabled: bool,
-) -> Result<AppSettings, String> {
-    state
-        .controller
-        .set_telemetry_enabled(enabled)
-        .await
-        .map_err(app_error)
-}
-
-#[tauri::command]
-pub async fn prepare_support_report(
-    state: State<'_, TauriState>,
-    error: String,
-) -> Result<ReportPreview, String> {
-    let settings = state.controller.settings().await;
-    let status = state.controller.status().await;
-    let logs = state.logs.entries();
-    let mut redactor = state.controller.report_redactor()?;
-    let settings_value =
-        serde_json::to_value(&settings).map_err(|_| "support report privacy filter failed")?;
-    redactor.remember_json(&settings_value);
-    let manager = state.reports.clone();
-    tokio::task::spawn_blocking(move || {
-        manager.prepare(&error, &settings, status, &logs, &redactor)
-    })
-    .await
-    .map_err(|_| "support report preparation failed".to_owned())?
-}
-
 #[cfg(windows)]
 #[tauri::command]
 pub async fn prepare_ics_report(state: State<'_, TauriState>) -> Result<ReportPreview, String> {
@@ -155,37 +127,31 @@ pub async fn prepare_ics_report(state: State<'_, TauriState>) -> Result<ReportPr
         .ics_signature_mismatch()
         .await
         .ok_or("no Windows ICS signature mismatch is available")?;
-    let settings = state.controller.settings().await;
-    let status = state.controller.status().await;
     let manager = state.reports.clone();
     tokio::task::spawn_blocking(move || {
         let directory = crate::native::system_directory().map_err(|error| error.to_string())?;
         let dll = std::fs::File::open(directory.join(crate::os::hotspot::ICS_CLIENT_DLL))
             .map_err(|_| "could not open the system DLL")?;
         let build = crate::native::windows_build().unwrap_or_else(|| "unknown".to_owned());
-        manager.prepare_ics_report(mismatch, dll, build, &settings, status)
+        manager.prepare_ics_report(mismatch, dll, build)
     })
     .await
     .map_err(|_| "support report preparation failed".to_owned())?
 }
 
+#[cfg(windows)]
 #[tauri::command]
-pub async fn send_support_report(
+pub async fn send_ics_report(
     state: State<'_, TauriState>,
     report_id: Uuid,
     consent: bool,
 ) -> Result<ReportReceipt, String> {
-    let operation = state
-        .controller
-        .telemetry()
-        .operation(Operation::ReportUpload);
-    let result = state.reports.send(report_id, consent).await;
-    operation.finish(result.as_ref().err().map(|_| ErrorKind::Network));
-    result
+    state.reports.send(report_id, consent).await
 }
 
+#[cfg(windows)]
 #[tauri::command]
-pub async fn discard_support_report(
+pub async fn discard_ics_report(
     state: State<'_, TauriState>,
     report_id: Uuid,
 ) -> Result<(), String> {
@@ -194,28 +160,156 @@ pub async fn discard_support_report(
 }
 
 #[tauri::command]
-pub async fn import_subscription(
-    state: State<'_, TauriState>,
-    source: String,
-) -> Result<AppSettings, String> {
+pub async fn import_profiles(state: State<'_, TauriState>, source: String) -> Result<(), String> {
     state
         .controller
-        .import_subscription(&source)
+        .import_profiles(&source)
         .await
-        .map_err(app_error)?;
-    Ok(state.controller.settings().await)
+        .map_err(app_error)
 }
 
-/// Import from the subscription stored in settings — whichever one this build
-/// was given, until the user replaces it. Seeds the profile list on first run.
 #[tauri::command]
-pub async fn refresh_subscription(state: State<'_, TauriState>) -> Result<AppSettings, String> {
+pub async fn get_profile_yaml(
+    state: State<'_, TauriState>,
+    profile_id: String,
+) -> Result<String, String> {
     state
         .controller
-        .import_configured_subscription()
+        .profile_yaml(&profile_id)
         .await
-        .map_err(app_error)?;
-    Ok(state.controller.settings().await)
+        .map_err(app_error)
+}
+
+#[tauri::command]
+pub async fn save_profile_yaml(
+    state: State<'_, TauriState>,
+    profile_id: Option<String>,
+    yaml: String,
+) -> Result<(), String> {
+    state
+        .controller
+        .save_profile_yaml(profile_id, &yaml)
+        .await
+        .map_err(app_error)
+}
+
+#[tauri::command]
+pub async fn add_subscription(
+    state: State<'_, TauriState>,
+    options: SubscriptionOptions,
+) -> Result<(), String> {
+    state
+        .controller
+        .add_subscription(options)
+        .await
+        .map_err(app_error)
+}
+
+#[tauri::command]
+pub async fn update_subscription(
+    state: State<'_, TauriState>,
+    subscription_id: Uuid,
+    options: SubscriptionOptions,
+) -> Result<(), String> {
+    state
+        .controller
+        .update_subscription(subscription_id, options)
+        .await
+        .map_err(app_error)
+}
+
+#[tauri::command]
+pub async fn refresh_subscription(
+    state: State<'_, TauriState>,
+    subscription_id: Uuid,
+) -> Result<(), String> {
+    state
+        .controller
+        .refresh_subscription(subscription_id)
+        .await
+        .map_err(app_error)
+}
+
+#[tauri::command]
+pub async fn delete_subscription(
+    state: State<'_, TauriState>,
+    subscription_id: Uuid,
+) -> Result<(), String> {
+    state
+        .controller
+        .delete_subscription(subscription_id)
+        .await
+        .map_err(app_error)
+}
+
+#[tauri::command]
+pub async fn ping_subscription(
+    state: State<'_, TauriState>,
+    subscription_id: Uuid,
+) -> Result<HashMap<String, Option<u64>>, String> {
+    state
+        .controller
+        .ping_subscription(subscription_id)
+        .await
+        .map_err(app_error)
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+pub async fn read_clipboard(window: tauri::WebviewWindow) -> Result<String, String> {
+    let (send, receive) = tokio::sync::oneshot::channel();
+    window
+        .run_on_main_thread(move || {
+            let clipboard =
+                gtk::gdk::Display::default().and_then(|display| gtk::Clipboard::default(&display));
+            match clipboard {
+                Some(clipboard) => clipboard.request_text(|_, text| {
+                    let _ = send.send(text.map(str::to_owned));
+                }),
+                None => {
+                    let _ = send.send(None);
+                }
+            }
+        })
+        .map_err(|error| error.to_string())?;
+    receive
+        .await
+        .ok()
+        .flatten()
+        .ok_or_else(|| "clipboard does not contain text".to_owned())
+}
+
+#[cfg(windows)]
+#[tauri::command]
+pub fn read_clipboard() -> Result<String, String> {
+    use windows::Win32::Foundation::HGLOBAL;
+    use windows::Win32::System::{
+        DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard},
+        Memory::{GlobalLock, GlobalSize, GlobalUnlock},
+        Ole::CF_UNICODETEXT,
+    };
+
+    // CF_UNICODETEXT is a NUL-terminated UTF-16 string in a global allocation.
+    // Borrow it only while the clipboard is open and the block is locked.
+    unsafe {
+        OpenClipboard(None).map_err(|error| error.to_string())?;
+        let text = (|| {
+            let format = u32::from(CF_UNICODETEXT.0);
+            let handle = HGLOBAL(GetClipboardData(format).ok()?.0);
+            let len = GlobalSize(handle) / size_of::<u16>();
+            let pointer = GlobalLock(handle).cast::<u16>();
+            if pointer.is_null() {
+                return None;
+            }
+            let units = std::slice::from_raw_parts(pointer, len);
+            let end = units.iter().position(|unit| *unit == 0);
+            let text = end.map(|end| String::from_utf16_lossy(&units[..end]));
+            let _ = GlobalUnlock(handle);
+            text
+        })();
+        let _ = CloseClipboard();
+        text.ok_or_else(|| "clipboard does not contain text".to_owned())
+    }
 }
 
 #[tauri::command]
@@ -231,7 +325,7 @@ pub async fn complete_onboarding(state: State<'_, TauriState>) -> Result<AppSett
 #[tauri::command]
 pub async fn select_profile(
     state: State<'_, TauriState>,
-    profile_id: String,
+    profile_id: Option<String>,
 ) -> Result<AppSettings, String> {
     state
         .controller
@@ -248,7 +342,7 @@ pub async fn delete_profile(
 ) -> Result<AppSettings, String> {
     state
         .controller
-        .delete_profile(profile_id)
+        .delete_profile(&profile_id)
         .await
         .map_err(app_error)?;
     Ok(state.controller.settings().await)
@@ -301,7 +395,6 @@ pub async fn get_logs(
 #[tauri::command]
 pub async fn clear_logs(state: State<'_, TauriState>) -> Result<(), String> {
     state.logs.clear();
-    state.reports.clear();
     Ok(())
 }
 

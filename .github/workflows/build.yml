@@ -6,6 +6,13 @@ on:
       configuration:
         required: true
         type: string
+      bundle_subscription:
+        description: Bundle the optional default VPN subscription
+        type: boolean
+        default: false
+    secrets:
+      VRG_DEFAULT_SUBSCRIPTION_URL:
+        required: false
 
 permissions:
   contents: read
@@ -42,6 +49,8 @@ jobs:
           submodules: recursive
 
       - name: Build and test in the target distribution
+        env:
+          VRG_DEFAULT_SUBSCRIPTION_URL: ${{ inputs.bundle_subscription && secrets.VRG_DEFAULT_SUBSCRIPTION_URL || '' }}
         run: bash scripts/local_build.sh --mode container --engine docker --bundles "$FORMAT"
 
       - name: Install package in a fresh runtime container
@@ -124,6 +133,8 @@ jobs:
           cargo test --locked --all-targets --all-features --target "$TARGET"
 
       - name: Build NSIS installer
+        env:
+          VRG_DEFAULT_SUBSCRIPTION_URL: ${{ inputs.bundle_subscription && secrets.VRG_DEFAULT_SUBSCRIPTION_URL || '' }}
         shell: bash
         run: bash scripts/package-windows.sh
 

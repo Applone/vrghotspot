@@ -5,17 +5,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::time::Duration;
 use thiserror::Error;
+use uuid::Uuid;
 
 const MAX_SUBSCRIPTION_BYTES: u64 = 10 * 1024 * 1024;
 const SUBSCRIPTION_TIMEOUT: Duration = Duration::from_secs(25);
 
 /// The subscription the application ships with, seeded on first run so the app
-/// is usable out of the box. Users can add their own on top of it.
-///
-/// The address is not kept in the source tree: it is baked in at build time from
-/// `VRG_DEFAULT_SUBSCRIPTION_URL`, which release builds take from the repository
-/// secret of the same name. A build made without that variable simply ships no
-/// subscription, and the person adds their own address in the settings.
+/// is usable out of the box when VRG_DEFAULT_SUBSCRIPTION_URL is set at build time.
 pub const DEFAULT_SUBSCRIPTION_URL: &str = match option_env!("VRG_DEFAULT_SUBSCRIPTION_URL") {
     Some(url) => url,
     None => "",
@@ -49,6 +45,57 @@ pub struct SubscriptionInfo {
     pub expires_at: Option<u64>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SubscriptionOptions {
+    pub title: String,
+    pub url: String,
+    pub auto_refresh_minutes: u32,
+    pub send_hwid: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StoredSubscription {
+    pub id: Uuid,
+    #[serde(flatten)]
+    pub options: SubscriptionOptions,
+    pub info: SubscriptionInfo,
+    pub last_refreshed: Option<u64>,
+}
+
+impl StoredSubscription {
+    pub fn new(options: SubscriptionOptions) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            options,
+            info: SubscriptionInfo::default(),
+            last_refreshed: None,
+        }
+    }
+
+    pub fn refresh_due(&self, now: u64, last_attempt: Option<u64>) -> bool {
+        let interval = u64::from(self.options.auto_refresh_minutes) * 60;
+        interval > 0
+            && self
+                .last_refreshed
+                .max(last_attempt)
+                .is_none_or(|last| now.saturating_sub(last) >= interval)
+    }
+}
+
+impl SubscriptionOptions {
+    pub fn normalize(mut self) -> Result<Self, SubscriptionError> {
+        let mut url =
+            url::Url::parse(self.url.trim()).map_err(|_| SubscriptionError::InvalidUrl)?;
+        if url.scheme() != "https" || url.host_str().is_none() {
+            return Err(SubscriptionError::InvalidUrl);
+        }
+        url.set_fragment(None);
+        self.url = url.into();
+        self.title = self.title.trim().to_owned();
+        Ok(self)
+    }
+}
+
 /// A subscription body together with whatever the provider said about it.
 #[derive(Debug, Clone)]
 pub struct FetchedSubscription {
@@ -59,21 +106,42 @@ pub struct FetchedSubscription {
 #[derive(Clone)]
 pub struct SubscriptionClient {
     client: reqwest::Client,
+    hwid: Option<Uuid>,
 }
 
 impl SubscriptionClient {
-    pub fn new(user_agent_override: Option<String>) -> Result<Self, SubscriptionError> {
+    pub fn new(
+        user_agent_override: Option<String>,
+        hwid: Option<Uuid>,
+    ) -> Result<Self, SubscriptionError> {
         let user_agent = user_agent_override.unwrap_or_else(default_user_agent);
-        let client = reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder()
             .user_agent(user_agent)
             .https_only(true)
-            .timeout(SUBSCRIPTION_TIMEOUT)
-            .build()?;
-        Ok(Self { client })
+            .timeout(SUBSCRIPTION_TIMEOUT);
+        if hwid.is_some() {
+            builder = builder.redirect(reqwest::redirect::Policy::custom(|attempt| {
+                if attempt
+                    .previous()
+                    .first()
+                    .is_some_and(|origin| origin.origin() != attempt.url().origin())
+                {
+                    attempt.error("HWID requests cannot follow redirects to a different origin")
+                } else {
+                    reqwest::redirect::Policy::default().redirect(attempt)
+                }
+            }));
+        }
+        let client = builder.build()?;
+        Ok(Self { client, hwid })
     }
 
     pub async fn fetch(&self, url: &str) -> Result<FetchedSubscription, SubscriptionError> {
-        let mut response = self.client.get(url).send().await?.error_for_status()?;
+        let mut request = self.client.get(url);
+        if let Some(hwid) = self.hwid {
+            request = request.header("x-hwid", hwid.to_string());
+        }
+        let mut response = request.send().await?.error_for_status()?;
         // `Content-Length` is only a hint: it is absent under chunked encoding and
         // a hostile endpoint can simply understate it. Check it anyway to fail
         // fast on the honest case.
@@ -184,24 +252,13 @@ pub fn parse_subscription_response(body: &str) -> Result<SubscriptionDocument, S
         return Ok(SubscriptionDocument::Proxies(vec![proxy]));
     }
 
-    if trimmed.starts_with('{') || trimmed.starts_with('[') {
-        let json: Value = serde_json::from_str(trimmed)?;
-        let proxies = proxies_from_json(json);
-        if proxies.is_empty() {
-            return Err(SubscriptionError::NoUsableNode);
-        }
-        return Ok(SubscriptionDocument::Proxies(proxies));
-    }
-
-    // A Clash/Mihomo YAML document carrying a `proxies:` list.
-    if let Ok(Value::Object(map)) = serde_yaml::from_str::<Value>(trimmed)
-        && let Some(Value::Array(proxies)) = map.get("proxies")
-    {
-        let proxies: Vec<Value> = proxies
-            .iter()
-            .filter(|proxy| proxy.is_object())
-            .cloned()
-            .collect();
+    let structured = if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        serde_json::from_str(trimmed).or_else(|_| serde_yaml::from_str::<Value>(trimmed))
+    } else {
+        serde_yaml::from_str(trimmed)
+    };
+    if let Ok(value @ (Value::Object(_) | Value::Array(_))) = structured {
+        let proxies = proxies_from_json(value);
         if !proxies.is_empty() {
             return Ok(SubscriptionDocument::Proxies(proxies));
         }
@@ -224,6 +281,31 @@ pub fn parse_subscription_response(body: &str) -> Result<SubscriptionDocument, S
     } else {
         Ok(SubscriptionDocument::Proxies(proxies))
     }
+}
+
+pub fn parse_proxy_yaml(yaml: &str) -> Result<Value, SubscriptionError> {
+    let proxy: Value = serde_yaml::from_str(yaml)?;
+    if !usable_proxy(&proxy) {
+        return Err(SubscriptionError::InvalidProxy);
+    }
+    Ok(proxy)
+}
+
+fn usable_proxy(proxy: &Value) -> bool {
+    proxy
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| !kind.trim().is_empty())
+        && proxy_endpoint(proxy).is_some()
+}
+
+pub fn proxy_endpoint(proxy: &Value) -> Option<(&str, u16)> {
+    let server = proxy.get("server")?.as_str()?.trim();
+    let port = match proxy.get("port")? {
+        Value::String(port) => port.parse().ok()?,
+        port => u16::try_from(port.as_u64()?).ok()?,
+    };
+    (!server.is_empty() && port != 0).then_some((server, port))
 }
 
 /// Extract proxy nodes from a JSON document: either an array of nodes or an
@@ -272,18 +354,12 @@ impl SubscriptionDocument {
     }
 }
 
-pub fn stored_profiles_from_document(
-    document: SubscriptionDocument,
-    source_url: Option<&str>,
-) -> Vec<StoredVpnProfile> {
+pub fn stored_profiles_from_document(document: SubscriptionDocument) -> Vec<StoredVpnProfile> {
     match document {
         SubscriptionDocument::Proxies(proxies) => proxies
             .into_iter()
-            .map(|proxy| {
-                let mut profile = StoredVpnProfile::from_proxy(proxy);
-                profile.source_url = source_url.map(str::to_owned);
-                profile
-            })
+            .filter(usable_proxy)
+            .map(StoredVpnProfile::from_proxy)
             .collect(),
     }
 }
@@ -294,11 +370,12 @@ pub struct StoredVpnProfile {
     pub name: String,
     /// A Mihomo (Clash.Meta) proxy map.
     pub proxy: Value,
-    /// The subscription URL this profile was imported from, when it came from a
-    /// remote endpoint. Used to refresh the proxy on start. `None` for profiles
-    /// pasted as a literal `vless://` URI or JSON, which cannot be re-fetched.
     #[serde(default)]
-    pub source_url: Option<String>,
+    pub subscription_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_override: Option<Value>,
+    #[serde(default, skip_serializing)]
+    pub(crate) source_url: Option<String>,
 }
 
 impl StoredVpnProfile {
@@ -336,13 +413,24 @@ impl StoredVpnProfile {
 
     pub fn from_proxy(proxy: Value) -> Self {
         let name = mihomo_proxy_name(&proxy);
-        let id = Self::identifier(&proxy);
         Self {
-            id,
+            id: Self::identifier(&proxy),
             name,
             proxy,
+            subscription_id: None,
+            proxy_override: None,
             source_url: None,
         }
+    }
+
+    pub fn effective_proxy(&self) -> &Value {
+        self.proxy_override.as_ref().unwrap_or(&self.proxy)
+    }
+
+    pub fn display_name(&self) -> String {
+        self.proxy_override
+            .as_ref()
+            .map_or_else(|| self.name.clone(), mihomo_proxy_name)
     }
 }
 
@@ -400,18 +488,28 @@ pub fn sanitize_proxy(proxy: &Value) -> Value {
 
 #[derive(Debug, Error)]
 pub enum SubscriptionError {
-    #[error("failed to build HTTP client: {0}")]
-    Client(#[from] reqwest::Error),
-    #[error("invalid remote JSON configuration: {0}")]
-    Json(#[from] serde_json::Error),
+    #[error("subscription HTTP request failed: {0}")]
+    Client(reqwest::Error),
+    #[error("the subscription address must be an HTTPS URL")]
+    InvalidUrl,
     #[error("subscription response exceeded {0} bytes")]
     ResponseTooLarge(u64),
     #[error("subscription response was not valid UTF-8")]
     InvalidUtf8,
     #[error("invalid proxy link: {0}")]
     Proxy(#[from] ProxyParseError),
+    #[error("invalid profile YAML: {0}")]
+    Yaml(#[from] serde_yaml::Error),
+    #[error("a proxy mapping with a type, a server and a port from 1 to 65535 is required")]
+    InvalidProxy,
     #[error("subscription response did not contain a usable proxy node or configuration")]
     NoUsableNode,
+}
+
+impl From<reqwest::Error> for SubscriptionError {
+    fn from(error: reqwest::Error) -> Self {
+        Self::Client(error.without_url())
+    }
 }
 
 #[cfg(test)]
@@ -458,6 +556,56 @@ proxies:
         assert_eq!(proxies.len(), 1);
         assert_eq!(proxies[0]["name"], json!("Node A"));
         assert_eq!(proxies[0]["type"], json!("vless"));
+    }
+
+    #[test]
+    fn imports_a_standalone_yaml_proxy_and_validates_manual_edits() {
+        let yaml = "name: My proxy\ntype: socks5\nserver: example.test\nport: 1080\n";
+        let proxy = parse_proxy_yaml(yaml).unwrap();
+        let imported = stored_profiles_from_document(parse_subscription_response(yaml).unwrap());
+        assert_eq!(imported.len(), 1);
+        assert_eq!(imported[0].effective_proxy(), &proxy);
+        assert_eq!(proxy_endpoint(&proxy), Some(("example.test", 1080)));
+
+        assert!(matches!(
+            parse_proxy_yaml(&yaml.replace("1080", "65536")),
+            Err(SubscriptionError::InvalidProxy)
+        ));
+        assert!(matches!(
+            parse_proxy_yaml("port: ["),
+            Err(SubscriptionError::Yaml(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn sends_hwid_only_for_an_enabled_subscription() {
+        use axum::{Router, http::HeaderMap, routing::get};
+
+        let server = Router::new().route(
+            "/",
+            get(|headers: HeaderMap| async move {
+                let mut response = HeaderMap::new();
+                if let Some(hwid) = headers.get("x-hwid") {
+                    response.insert("profile-title", hwid.clone());
+                }
+                (response, "type: socks5\nserver: example.test\nport: 1080")
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, server).await });
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let hwid = Uuid::new_v4();
+
+        for hwid in [Some(hwid), None, Some(hwid)] {
+            let subscription = SubscriptionClient {
+                client: client.clone(),
+                hwid,
+            };
+            let fetched = subscription.fetch(&url).await.unwrap();
+            assert_eq!(fetched.info.title, hwid.map(|id| id.to_string()));
+        }
+        server.abort();
     }
 
     #[test]
@@ -523,15 +671,16 @@ proxies:
         );
 
         // The same endpoint keeps its identifier wherever it appears in the list.
-        let first = stored_profiles_from_document(
-            SubscriptionDocument::Proxies(vec![finland.clone(), sweden.clone()]),
-            Some("https://example.com/sub"),
+        let first = stored_profiles_from_document(SubscriptionDocument::Proxies(vec![
+            finland.clone(),
+            sweden.clone(),
+        ]));
+        let reordered =
+            stored_profiles_from_document(SubscriptionDocument::Proxies(vec![sweden, finland]));
+        assert_eq!(
+            StoredVpnProfile::identifier(&first[0].proxy),
+            StoredVpnProfile::identifier(&reordered[1].proxy)
         );
-        let reordered = stored_profiles_from_document(
-            SubscriptionDocument::Proxies(vec![sweden, finland]),
-            Some("https://example.com/sub"),
-        );
-        assert_eq!(first[0].id, reordered[1].id);
         assert_eq!(first[1].id, reordered[0].id);
     }
 

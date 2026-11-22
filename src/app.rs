@@ -1,7 +1,6 @@
 use crate::config::geodata::{GeoDataError, GeoDataSettings, ensure_geo_data, update_geo_data};
 use crate::config::subscription::{
-    DEFAULT_SUBSCRIPTION_URL, StoredVpnProfile, SubscriptionClient, SubscriptionError,
-    SubscriptionInfo, parse_subscription_response, sanitize_proxy, stored_profiles_from_document,
+    StoredSubscription, StoredVpnProfile, SubscriptionError, SubscriptionInfo, sanitize_proxy,
 };
 use crate::core::config::{CoreConfig, CoreConfigError};
 use crate::core::process::{CoreHandle, CoreManager, CoreProcessError};
@@ -13,19 +12,20 @@ use crate::os::{
     app_config_dir,
     conflicts::{ConflictError, ConflictScanner},
 };
-use crate::telemetry::redaction::Redactor;
-use crate::telemetry::{ErrorKind, Operation, Telemetry};
 use crate::ui::events::{EventSink, UiEvent, UiEventSink};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write as IoWrite;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::{Instant, sleep, sleep_until, timeout, timeout_at};
 use tracing::{error, info, warn};
+
+mod profiles;
+
+use uuid::Uuid;
 
 const SETTINGS_FILE: &str = "settings.json";
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(80 + TUNNEL_PROBE_DEADLINE.as_secs());
@@ -69,40 +69,27 @@ pub struct AppSettings {
     pub hotspot_ssid: String,
     #[serde(default)]
     pub hotspot_passphrase: String,
-    /// Subscription the profile list is seeded and refreshed from. Defaults to
-    /// the one compiled into this build, which is empty unless the build was
-    /// given one; replacing it is how a user brings their own.
-    #[serde(default = "default_subscription_url")]
-    pub subscription_url: String,
-    /// What the provider says about that subscription, cached from the last
-    /// successful fetch so the UI has something to show while offline.
     #[serde(default)]
-    pub subscription_info: SubscriptionInfo,
+    pub subscriptions: Vec<StoredSubscription>,
+    #[serde(default)]
+    installation_id: Option<Uuid>,
+    #[serde(default, skip_serializing)]
+    subscription_url: String,
+    #[serde(default, skip_serializing)]
+    subscription_info: SubscriptionInfo,
     /// Cleared once the welcome screen has been completed.
     #[serde(default)]
     pub onboarding_complete: bool,
-    /// Anonymous usage statistics are on unless the user turns them off.
-    /// Reports to support stay strictly opt-in either way.
-    #[serde(default = "default_telemetry_enabled")]
-    pub telemetry_enabled: bool,
     pub geo_data: GeoDataSettings,
 }
 
 const DEFAULT_HOTSPOT_SSID: &str = "VPN-Hotspot";
-
-fn default_subscription_url() -> String {
-    DEFAULT_SUBSCRIPTION_URL.to_owned()
-}
 
 fn default_hotspot_ssid() -> String {
     DEFAULT_HOTSPOT_SSID.to_owned()
 }
 
 fn default_enable_sharing() -> bool {
-    true
-}
-
-fn default_telemetry_enabled() -> bool {
     true
 }
 
@@ -126,19 +113,17 @@ impl AppSettings {
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or_else(|| DEFAULT_HOTSPOT_SSID.to_owned()),
             hotspot_passphrase: std::env::var("VRG_HOTSPOT_PASSPHRASE").unwrap_or_default(),
-            subscription_url: std::env::var("VRG_SUBSCRIPTION_URL")
-                .ok()
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(default_subscription_url),
+            subscriptions: profiles::seeded_subscriptions(),
+            installation_id: None,
+            subscription_url: String::new(),
             subscription_info: SubscriptionInfo::default(),
             onboarding_complete: false,
-            telemetry_enabled: true,
             geo_data: GeoDataSettings::default(),
         }
     }
 
     pub fn load_or_env() -> Self {
-        let mut settings = match Self::load_from_disk() {
+        match Self::load_from_disk() {
             Ok(settings) => settings,
             Err(err) => {
                 // Falling back to defaults means the profile list is about to be
@@ -164,14 +149,7 @@ impl AppSettings {
                 }
                 Self::from_env()
             }
-        };
-        // Both branches above can produce `telemetry_enabled: true` (defaults on
-        // fresh installs and after settings recovery), so the separately stored
-        // opt-out is re-applied on top of whatever they chose.
-        if persisted_telemetry_opt_out(&telemetry_preference_path()) {
-            settings.telemetry_enabled = false;
         }
-        settings
     }
 
     pub fn load_from_disk() -> Result<Self, SettingsPersistenceError> {
@@ -182,32 +160,8 @@ impl AppSettings {
 
         let content = fs::read_to_string(path)?;
         let mut settings: Self = serde_json::from_str(&content)?;
-        // Profile identifiers used to be derived from the node's position in the
-        // subscription, so a reordered list silently pointed the selection at a
-        // different server. Rewrite them to the content-derived form once, on the
-        // way in, preserving which profile was selected.
-        settings.migrate_profile_ids();
+        settings.migrate_subscriptions();
         Ok(settings)
-    }
-
-    /// Recompute stored profile identifiers with the current scheme.
-    ///
-    /// Old identifiers looked like `vless-<slug>-<index>`; every all-Cyrillic name
-    /// slugged to the same string, which left the index as the only distinguishing
-    /// part. Migrating in place keeps existing installations working across the
-    /// change instead of orphaning their selection.
-    fn migrate_profile_ids(&mut self) {
-        let mut selected = None;
-        for profile in &mut self.profiles {
-            let refreshed = StoredVpnProfile::identifier(&profile.proxy);
-            if self.selected_profile_id.as_deref() == Some(profile.id.as_str()) {
-                selected = Some(refreshed.clone());
-            }
-            profile.id = refreshed;
-        }
-        if let Some(selected) = selected {
-            self.selected_profile_id = Some(selected);
-        }
     }
 
     /// Persist the settings atomically, readable only by their owner.
@@ -275,91 +229,10 @@ impl AppSettings {
 
 pub type RuntimeSettings = AppSettings;
 
-pub fn telemetry_identity_path() -> PathBuf {
-    settings_path().with_file_name("telemetry-installation-id")
-}
-
-#[derive(Serialize, Deserialize)]
-struct TelemetryPreference {
-    /// Written only once the user has touched the toggle; an absent file keeps
-    /// the build default (collection on, reports opt-in).
-    #[serde(default = "default_telemetry_enabled")]
-    enabled: bool,
-}
-
-fn telemetry_preference_path() -> PathBuf {
-    settings_path().with_file_name("telemetry-preference.json")
-}
-
-/// The opt-out lives apart from `settings.json`: when the main file becomes
-/// unreadable the recovery path rebuilds it from defaults, and `true` is one of
-/// those defaults. A preference that exists but cannot be read fails closed, so
-/// a damaged or unreadable file never silently re-enables collection.
-fn persisted_telemetry_opt_out(path: &Path) -> bool {
-    match fs::read_to_string(path) {
-        Ok(content) => match serde_json::from_str::<TelemetryPreference>(&content) {
-            Ok(preference) => !preference.enabled,
-            Err(error) => {
-                warn!(error = %error, "telemetry preference file is unreadable; keeping collection off");
-                true
-            }
-        },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-        Err(error) => {
-            warn!(error = %error, "telemetry preference file cannot be read; keeping collection off");
-            true
-        }
-    }
-}
-
-fn persist_telemetry_preference(path: &Path, enabled: bool) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let content = serde_json::to_string_pretty(&TelemetryPreference { enabled })
-        .expect("telemetry preference serialization cannot fail");
-    // Unique temporary name: two toggles racing a fixed `*.tmp` would corrupt
-    // each other's file, and this is the only record of the user's opt-out.
-    let temporary = path.with_extension(format!("json.{}.tmp", uuid::Uuid::new_v4()));
-    let result = (|| {
-        let mut options = fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&temporary)?;
-        file.write_all(content.as_bytes())?;
-        file.sync_all()?;
-        fs::rename(&temporary, path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result
-}
-
 fn settings_path() -> PathBuf {
     app_config_dir()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
         .join(SETTINGS_FILE)
-}
-
-/// The host part of a subscription URL, for logging.
-///
-/// The full URL usually carries a per-user token in its path or query, and these
-/// records are written to disk and handed to the interface, so the token must not
-/// travel with them.
-fn subscription_host(url: &str) -> String {
-    url.split_once("://")
-        .map(|(_, rest)| rest)
-        .unwrap_or(url)
-        .split(['/', '?', '#'])
-        .next()
-        .filter(|host| !host.is_empty())
-        .unwrap_or("unknown")
-        .to_owned()
 }
 
 #[derive(Debug, Error)]
@@ -382,11 +255,10 @@ pub struct HotspotController<S = UiEventSink> {
     settings: Arc<RwLock<AppSettings>>,
     running: Arc<Mutex<Option<RunningApp>>>,
     lifecycle: Mutex<()>,
+    subscription_refresh: Mutex<()>,
     status: Arc<RwLock<HotspotStatus>>,
     #[cfg(windows)]
     last_hotspot_adapters: std::sync::Mutex<Vec<NetworkAdapter>>,
-    telemetry: Telemetry,
-    redactor: std::sync::Mutex<Redactor>,
     ui: S,
 }
 
@@ -443,108 +315,16 @@ where
     S: Clone + Send + Sync + 'static + EventSink,
 {
     pub fn with_event_sink(settings: AppSettings, ui: S) -> Self {
-        Self::with_telemetry(settings, ui, Telemetry::default())
-    }
-
-    pub fn with_telemetry(settings: AppSettings, ui: S, telemetry: Telemetry) -> Self {
-        let mut redactor = Redactor::default();
-        if let Ok(value) = serde_json::to_value(&settings) {
-            redactor.remember_json(&value);
-        }
-        for name in [
-            "HOME",
-            "USER",
-            "USERPROFILE",
-            "USERNAME",
-            "VRG_TELEMETRY_TOKEN",
-        ] {
-            if let Ok(value) = std::env::var(name) {
-                redactor.remember(&value);
-            }
-        }
-        let running: Arc<Mutex<Option<RunningApp>>> = Arc::new(Mutex::new(None));
-        // Lease counting runs in the telemetry worker via this weak handle, so
-        // client metrics keep updating in headless/CLI mode and stop when the
-        // controller is gone instead of holding it alive.
-        let sampler_source = Arc::downgrade(&running);
-        telemetry.set_client_sampler(move || {
-            let running = sampler_source.upgrade()?;
-            let running = running.try_lock().ok()?;
-            let session = running.as_ref()?.sharing_session.as_ref()?;
-            session.connected_clients()
-        });
         Self {
             settings: Arc::new(RwLock::new(settings.with_resolved_geo_data())),
-            running,
+            running: Arc::new(Mutex::new(None)),
             lifecycle: Mutex::new(()),
+            subscription_refresh: Mutex::new(()),
             status: Arc::new(RwLock::new(HotspotStatus::Stopped)),
             #[cfg(windows)]
             last_hotspot_adapters: std::sync::Mutex::default(),
-            telemetry,
-            redactor: std::sync::Mutex::new(redactor),
             ui,
         }
-    }
-
-    pub fn telemetry(&self) -> &Telemetry {
-        &self.telemetry
-    }
-
-    pub async fn initialize_telemetry(&self) -> Result<(), String> {
-        let settings = self.settings.read().await;
-        self.telemetry.set_enabled(settings.telemetry_enabled).await
-    }
-
-    pub fn report_redactor(&self) -> Result<Redactor, String> {
-        self.redactor
-            .lock()
-            .map(|redactor| redactor.clone())
-            .map_err(|_| "support report privacy filter is unavailable".to_owned())
-    }
-
-    fn remember_private_values(&self, value: &impl Serialize) {
-        if let Ok(value) = serde_json::to_value(value)
-            && let Ok(mut redactor) = self.redactor.lock()
-        {
-            redactor.remember_json(&value);
-        }
-    }
-
-    pub async fn set_telemetry_enabled(&self, enabled: bool) -> Result<AppSettings, AppError> {
-        let mut stored = self.settings.write().await;
-        if !enabled {
-            // Cut the network side before persisting anything, so collection
-            // actually stops even if the preference write below fails.
-            self.telemetry
-                .set_enabled(false)
-                .await
-                .map_err(AppError::Telemetry)?;
-            stored.telemetry_enabled = false;
-        }
-        // Persist the preference in its own file first: it, not settings.json,
-        // is what protects the opt-out from the settings-recovery defaults.
-        persist_telemetry_preference(&telemetry_preference_path(), enabled)
-            .map_err(SettingsPersistenceError::from)?;
-        let mut next = stored.clone();
-        next.telemetry_enabled = enabled;
-        next.save_to_disk()?;
-        *stored = next.clone();
-        if enabled && let Err(error) = self.telemetry.set_enabled(true).await {
-            // Activation failed; roll every store back to the safe state.
-            next.telemetry_enabled = false;
-            *stored = next.clone();
-            let _ = persist_telemetry_preference(&telemetry_preference_path(), false);
-            let _ = next.save_to_disk();
-            self.ui.emit(UiEvent::SettingsChanged);
-            return Err(AppError::Telemetry(error));
-        }
-        drop(stored);
-        if enabled {
-            self.telemetry
-                .hotspot_state(self.status().await == HotspotStatus::Running);
-        }
-        self.ui.emit(UiEvent::SettingsChanged);
-        Ok(next)
     }
 
     pub async fn settings(&self) -> AppSettings {
@@ -553,25 +333,20 @@ where
 
     async fn observe<T>(
         &self,
-        operation: Operation,
+        operation: &'static str,
         future: impl std::future::Future<Output = Result<T, AppError>>,
     ) -> Result<T, AppError> {
-        let measurement = self.telemetry.operation(operation);
         let result = future.await;
         if let Err(error) = &result {
-            error!(operation = operation.as_str(), error = %error, "application operation failed");
+            error!(operation, error = %error, "application operation failed");
         }
-        measurement.finish(result.as_ref().err().map(AppError::telemetry_kind));
         result
     }
 
     #[tracing::instrument(skip_all)]
     pub async fn update_settings(&self, settings: AppSettings) -> Result<(), AppError> {
-        self.observe(
-            Operation::SettingsSave,
-            self.update_settings_inner(settings),
-        )
-        .await
+        self.observe("settings_save", self.update_settings_inner(settings))
+            .await
     }
 
     async fn update_settings_inner(&self, settings: AppSettings) -> Result<(), AppError> {
@@ -580,10 +355,15 @@ where
             return Err(AppError::SettingsLockedWhileRunning);
         }
 
-        let mut settings = settings.with_resolved_geo_data();
         let mut stored = self.settings.write().await;
-        settings.telemetry_enabled = stored.telemetry_enabled;
-        self.remember_private_values(&settings);
+        let mut settings = settings.with_resolved_geo_data();
+        settings.profiles.clone_from(&stored.profiles);
+        settings.subscriptions.clone_from(&stored.subscriptions);
+        settings
+            .selected_profile_id
+            .clone_from(&stored.selected_profile_id);
+        settings.installation_id = stored.installation_id;
+        settings.onboarding_complete = stored.onboarding_complete;
         info!(settings = %settings.describe_for_logs(), "updating application settings");
         settings.save_to_disk()?;
         *stored = settings;
@@ -653,155 +433,17 @@ where
             .clone()
     }
 
-    /// Import from the configured subscription. Used to seed the profile list on
-    /// first run and to refresh it on demand.
-    pub async fn import_configured_subscription(&self) -> Result<Vec<StoredVpnProfile>, AppError> {
-        let url = self.settings.read().await.subscription_url.clone();
-        let url = if url.trim().is_empty() {
-            DEFAULT_SUBSCRIPTION_URL.to_owned()
-        } else {
-            url
-        };
-        // A build without a compiled-in subscription has nothing to seed from;
-        // say so plainly instead of fetching an empty address.
-        if url.trim().is_empty() {
-            return Err(AppError::NoSubscriptionConfigured);
-        }
-        // A subscription URL normally embeds a per-user token, and these records
-        // reach both the on-disk log and the interface's log view. Log enough to
-        // correlate a failure with an endpoint, not enough to reuse it.
-        info!(
-            subscription_host = %subscription_host(&url),
-            "importing the configured subscription"
-        );
-        self.import_subscription(&url).await
-    }
-
-    #[tracing::instrument(skip_all)]
     pub async fn complete_onboarding(&self) -> Result<(), AppError> {
-        self.observe(Operation::Onboarding, self.complete_onboarding_inner())
-            .await
-    }
-
-    async fn complete_onboarding_inner(&self) -> Result<(), AppError> {
-        let mut settings = self.settings.write().await;
-        if settings.onboarding_complete {
-            return Ok(());
-        }
-        settings.onboarding_complete = true;
-        settings.save_to_disk()?;
-        drop(settings);
-        self.ui.emit(UiEvent::SettingsChanged);
-        Ok(())
-    }
-
-    #[tracing::instrument(skip_all)]
-    pub async fn import_subscription(
-        &self,
-        source: &str,
-    ) -> Result<Vec<StoredVpnProfile>, AppError> {
-        self.observe(
-            Operation::SubscriptionImport,
-            self.import_subscription_inner(source),
-        )
+        self.change_profiles(|settings| {
+            settings.onboarding_complete = true;
+            Ok(())
+        })
         .await
-    }
-
-    async fn import_subscription_inner(
-        &self,
-        source: &str,
-    ) -> Result<Vec<StoredVpnProfile>, AppError> {
-        self.remember_private_values(&source);
-        let trimmed = source.trim();
-        let is_literal =
-            trimmed.starts_with("vless://") || trimmed.starts_with('{') || trimmed.starts_with('[');
-        let mut fetched_info = None;
-        let document = if is_literal {
-            parse_subscription_response(trimmed)?
-        } else {
-            let user_agent = self.settings.read().await.user_agent_override.clone();
-            let client = SubscriptionClient::new(user_agent)?;
-            let fetched = client.fetch(trimmed).await?;
-            fetched_info = Some(fetched.info);
-            fetched.document
-        };
-        // Remember the remote endpoint so the profile can be refreshed on start;
-        // literal URIs/JSON have no endpoint to re-fetch.
-        let source_url = (!is_literal).then_some(trimmed);
-        let imported = stored_profiles_from_document(document, source_url);
-        self.remember_private_values(&imported);
-
-        let mut settings = self.settings.write().await;
-        if let Some(info) = fetched_info {
-            settings.subscription_info = info;
-            settings.subscription_url = trimmed.to_owned();
-        }
-        let select_first = settings.selected_profile_id.is_none();
-        // Reconcile rather than only appending. Skipping anything whose id already
-        // existed meant a provider that changed a server's details could never
-        // update it, while a provider that reordered its list produced duplicates.
-        let mut added = Vec::new();
-        for profile in &imported {
-            match settings
-                .profiles
-                .iter_mut()
-                .find(|existing| existing.id == profile.id)
-            {
-                Some(existing) => {
-                    // Same endpoint: take the provider's current details, but keep
-                    // a literal profile's `None` source_url from being overwritten
-                    // by a refresh that did not come from a subscription.
-                    if existing.proxy != profile.proxy || existing.name != profile.name {
-                        info!(profile_name = %profile.name, "updated VPN profile from subscription");
-                    }
-                    existing.name = profile.name.clone();
-                    existing.proxy = profile.proxy.clone();
-                    if profile.source_url.is_some() {
-                        existing.source_url = profile.source_url.clone();
-                    }
-                }
-                None => {
-                    info!(profile_name = %profile.name, "imported VPN profile from subscription");
-                    settings.profiles.push(profile.clone());
-                    added.push(profile.clone());
-                }
-            }
-        }
-
-        // Drop profiles this subscription used to provide and no longer lists, so
-        // the list cannot accumulate servers that stopped existing. Profiles from
-        // a different source — or pasted literally — are left alone.
-        if let Some(source_url) = source_url {
-            let still_offered = imported
-                .iter()
-                .map(|profile| profile.id.as_str())
-                .collect::<std::collections::HashSet<_>>();
-            settings.profiles.retain(|profile| {
-                profile.source_url.as_deref() != Some(source_url)
-                    || still_offered.contains(profile.id.as_str())
-            });
-            // The selection may have just been removed with it.
-            let selection_survives = settings
-                .selected_profile_id
-                .as_deref()
-                .is_some_and(|id| settings.profiles.iter().any(|profile| profile.id == id));
-            if !selection_survives {
-                settings.selected_profile_id =
-                    settings.profiles.first().map(|profile| profile.id.clone());
-            }
-        }
-
-        if select_first {
-            settings.selected_profile_id = added.first().map(|profile| profile.id.clone());
-        }
-        settings.save_to_disk()?;
-        self.ui.emit(UiEvent::ProfilesChanged);
-        Ok(added)
     }
 
     #[tracing::instrument(skip_all)]
     pub async fn update_geo_data(&self) -> Result<(), AppError> {
-        self.observe(Operation::GeoDataUpdate, self.update_geo_data_inner())
+        self.observe("geodata_update", self.update_geo_data_inner())
             .await
     }
 
@@ -814,48 +456,10 @@ where
         Ok(())
     }
 
-    pub async fn select_profile(&self, profile_id: impl Into<String>) -> Result<(), AppError> {
-        let profile_id = profile_id.into();
-        let mut settings = self.settings.write().await;
-        if settings
-            .profiles
-            .iter()
-            .any(|profile| profile.id == profile_id)
-        {
-            settings.selected_profile_id = Some(profile_id);
-            settings.save_to_disk()?;
-            self.ui.emit(UiEvent::ProfilesChanged);
-            Ok(())
-        } else {
-            Err(AppError::ProfileNotFound(profile_id))
-        }
-    }
-
-    pub async fn delete_profile(&self, profile_id: impl Into<String>) -> Result<(), AppError> {
-        let profile_id = profile_id.into();
-        let mut settings = self.settings.write().await;
-        let original_len = settings.profiles.len();
-        settings.profiles.retain(|profile| profile.id != profile_id);
-
-        if settings.profiles.len() == original_len {
-            return Err(AppError::ProfileNotFound(profile_id));
-        }
-
-        if settings.selected_profile_id.as_deref() == Some(profile_id.as_str()) {
-            settings.selected_profile_id =
-                settings.profiles.first().map(|profile| profile.id.clone());
-        }
-
-        settings.save_to_disk()?;
-        self.ui.emit(UiEvent::ProfilesChanged);
-        Ok(())
-    }
-
     #[tracing::instrument(skip_all)]
     pub async fn start_hotspot(&self) -> Result<(), AppError> {
         let _lifecycle = self.lifecycle.lock().await;
-        let operation = self.telemetry.operation(Operation::HotspotStart);
-        self.telemetry.hotspot_state(false);
+
         // Stop any existing instance first: the embedded core owns the TUN
         // device and the outbound policy-routing rule, so a second start must
         // not race a still-running one.
@@ -872,7 +476,6 @@ where
         }
 
         self.set_status(HotspotStatus::Starting).await;
-        self.refresh_selected_profile().await;
         let settings = self.settings().await;
 
         match timeout(STARTUP_TIMEOUT, self.start_inner(settings)).await {
@@ -881,14 +484,12 @@ where
                 *self.running.lock().await = Some(running);
                 self.set_status(HotspotStatus::Running).await;
                 self.ui.emit(UiEvent::ConnectionStarted { pid });
-                operation.finish(None);
                 Ok(())
             }
             Ok(Err(err)) => {
                 self.set_status(HotspotStatus::Stopped).await;
                 error!(error = %err, "failed to start hotspot");
                 self.ui.emit(UiEvent::Error(err.to_string()));
-                operation.finish(Some(err.telemetry_kind()));
                 Err(err)
             }
             Err(_) => {
@@ -896,7 +497,6 @@ where
                 let err = AppError::StartupTimedOut(STARTUP_TIMEOUT.as_secs());
                 error!(error = %err, "hotspot startup timed out");
                 self.ui.emit(UiEvent::Error(err.to_string()));
-                operation.finish(Some(ErrorKind::Timeout));
                 Err(err)
             }
         }
@@ -912,10 +512,8 @@ where
             return Ok(());
         };
 
-        let operation = self.telemetry.operation(Operation::HotspotStop);
         self.set_status(HotspotStatus::Stopping).await;
         let stop_result = running.stop().await;
-        operation.finish(stop_result.as_ref().err().map(AppError::telemetry_kind));
 
         match stop_result {
             Ok(()) => {
@@ -951,10 +549,7 @@ where
         }
 
         info!("scanning for network and process conflicts");
-        let operation = self.telemetry.operation(Operation::ConflictScan);
-        let conflicts = ConflictScanner::default().scan().await;
-        operation.finish(conflicts.as_ref().err().map(|_| ErrorKind::Conflict));
-        let conflicts = conflicts?;
+        let conflicts = ConflictScanner::default().scan().await?;
         if conflicts.has_conflicts() {
             warn!(?conflicts, "conflicts detected before startup");
             self.ui.emit(UiEvent::ConflictWarning(conflicts.clone()));
@@ -964,8 +559,8 @@ where
 
         let mut config = CoreConfig::default_client_tun();
         if let Some(profile) = settings.selected_profile() {
-            info!(profile_name = %profile.name, "applying selected VPN profile");
-            config.apply_proxy(&sanitize_proxy(&profile.proxy))?;
+            info!(profile_name = %profile.display_name(), "applying selected VPN profile");
+            config.apply_proxy(&sanitize_proxy(profile.effective_proxy()))?;
         } else {
             info!("no selected profile configured, using default direct Mihomo configuration");
         }
@@ -983,10 +578,7 @@ where
         let tunnel_routing = Arc::new(tunnel_routing);
         let mut core = CoreManager::with_home_dir(asset_dir);
         info!("launching Mihomo runtime");
-        let operation = self.telemetry.operation(Operation::CoreStart);
-        let handle = core.start(config).await;
-        operation.finish(handle.as_ref().err().map(|_| ErrorKind::Core));
-        let handle = handle?;
+        let handle = core.start(config).await?;
 
         // The embedded core runs IN-PROCESS, so it creates the TUN with this
         // process's privileges. Without CAP_NET_ADMIN it fails with
@@ -1030,7 +622,6 @@ where
         #[cfg(windows)]
         let mut ics_signature_mismatch = None;
         if settings.enable_sharing {
-            let operation = self.telemetry.operation(Operation::SharingStart);
             match enable_sharing_when_tun_is_ready(
                 &tunnel_routing,
                 settings.hotspot_wifi_interface.as_deref(),
@@ -1040,8 +631,6 @@ where
             .await
             {
                 Ok(session) => {
-                    operation.finish(None);
-                    self.telemetry.availability("hotspot", true);
                     let wifi_interface = session.wifi_interface.name.clone();
                     info!(
                         tun_interface = %session.tun_interface.name,
@@ -1063,8 +652,6 @@ where
                     {
                         last_seen.clone_from(adapters);
                     }
-                    operation.finish(Some(ErrorKind::Network));
-                    self.telemetry.availability("hotspot", false);
                     #[cfg(windows)]
                     if let HotspotError::Windows(cause) = &err {
                         ics_signature_mismatch = cause
@@ -1094,11 +681,7 @@ where
 
         if settings.selected_profile().is_some() {
             info!("probing internet egress through the active tunnel");
-            let operation = self.telemetry.operation(Operation::TunnelProbe);
-            let probe = verify_tunnel_connectivity().await;
-            operation.finish(probe.as_ref().err().map(AppError::telemetry_kind));
-            self.telemetry.availability("internet", probe.is_ok());
-            if let Err(err) = probe {
+            if let Err(err) = verify_tunnel_connectivity().await {
                 warn!(
                     error = %err,
                     hotspot_active = sharing_session.is_some(),
@@ -1136,93 +719,9 @@ where
     }
 
     async fn set_status(&self, status: HotspotStatus) {
-        self.telemetry
-            .hotspot_state(status == HotspotStatus::Running);
-        if status == HotspotStatus::Running {
-            self.telemetry.availability("vpn", true);
-        }
         *self.status.write().await = status;
         info!(?status, "hotspot status changed");
         self.ui.emit(UiEvent::StatusChanged(status));
-    }
-
-    /// Re-fetches the selected profile from its subscription endpoint so a start
-    /// uses the current server config rather than whatever was cached at import.
-    /// Best-effort: a fetch failure (offline, endpoint down) leaves the existing
-    /// profile in place so the user can still connect with the last-known config.
-    async fn refresh_selected_profile(&self) {
-        let (profile_id, source_url, user_agent) = {
-            let settings = self.settings.read().await;
-            let Some(profile) = settings.selected_profile() else {
-                return;
-            };
-            let Some(source_url) = profile.source_url.clone() else {
-                // Literal URI/JSON profiles have no endpoint to refresh from.
-                return;
-            };
-            (
-                profile.id.clone(),
-                source_url,
-                settings.user_agent_override.clone(),
-            )
-        };
-
-        let operation = self.telemetry.operation(Operation::SubscriptionRefresh);
-        info!(profile_id = %profile_id, "refreshing selected profile from subscription before start");
-        let client = match SubscriptionClient::new(user_agent) {
-            Ok(client) => client,
-            Err(err) => {
-                warn!(error = %err, "failed to build subscription client for refresh");
-                operation.finish(Some(ErrorKind::Configuration));
-                return;
-            }
-        };
-        let fetched = match client.fetch(&source_url).await {
-            Ok(fetched) => fetched,
-            Err(err) => {
-                warn!(error = %err, "failed to refresh profile from subscription, using cached config");
-                operation.finish(Some(ErrorKind::Subscription));
-                return;
-            }
-        };
-
-        operation.finish(None);
-        let refreshed = stored_profiles_from_document(fetched.document, Some(&source_url));
-        self.remember_private_values(&refreshed);
-        let mut settings = self.settings.write().await;
-        settings.subscription_info = fetched.info;
-        let Some(existing) = settings
-            .profiles
-            .iter()
-            .find(|profile| profile.id == profile_id)
-        else {
-            return;
-        };
-        // Match on the identifier. It is derived from the endpoint's connection
-        // details, so it survives both reordering and the provider relabelling a
-        // node — which matching on the display name did not.
-        let Some(updated) = refreshed
-            .into_iter()
-            .find(|candidate| candidate.id == existing.id)
-        else {
-            warn!(
-                profile_name = %existing.name,
-                "subscription no longer contains the selected profile, using cached config"
-            );
-            return;
-        };
-        if let Some(slot) = settings
-            .profiles
-            .iter_mut()
-            .find(|profile| profile.id == profile_id)
-        {
-            slot.proxy = updated.proxy;
-            slot.source_url = updated.source_url;
-        }
-        if let Err(err) = settings.save_to_disk() {
-            warn!(error = %err, "failed to persist refreshed profile");
-        }
-        self.ui.emit(UiEvent::ProfilesChanged);
     }
 }
 
@@ -1425,8 +924,12 @@ pub enum AppError {
     SettingsLockedWhileRunning,
     #[error("VPN profile not found: {0}")]
     ProfileNotFound(String),
-    #[error("no subscription is configured")]
-    NoSubscriptionConfigured,
+    #[error("subscription not found")]
+    SubscriptionNotFound,
+    #[error("a subscription with this address already exists")]
+    DuplicateSubscription,
+    #[error("the subscription request settings changed during refresh")]
+    SubscriptionChanged,
     #[error("hotspot startup timed out after {0} seconds")]
     StartupTimedOut(u64),
     #[error("could not verify internet access through the VPN tunnel: {0}")]
@@ -1462,25 +965,6 @@ Escalating only the nftables helper is not sufficient, because the core runs ins
     GeoData(#[from] GeoDataError),
     #[error(transparent)]
     SettingsPersistence(#[from] SettingsPersistenceError),
-    #[error("telemetry configuration failed: {0}")]
-    Telemetry(String),
-}
-
-impl AppError {
-    pub fn telemetry_kind(&self) -> ErrorKind {
-        match self {
-            Self::SettingsLockedWhileRunning | Self::SettingsPersistence(_) => ErrorKind::Settings,
-            Self::ProfileNotFound(_) | Self::NoSubscriptionConfigured => ErrorKind::Selection,
-            Self::StartupTimedOut(_) => ErrorKind::Timeout,
-            Self::TunnelUnreachable(_) | Self::Hotspot(_) => ErrorKind::Network,
-            Self::TunDeviceUnavailable { .. } => ErrorKind::Permission,
-            Self::Subscription(_) => ErrorKind::Subscription,
-            Self::CoreConfig(_) | Self::Telemetry(_) => ErrorKind::Configuration,
-            Self::CoreProcess(_) => ErrorKind::Core,
-            Self::Conflict(_) => ErrorKind::Conflict,
-            Self::GeoData(_) => ErrorKind::GeoData,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1488,82 +972,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn settings_default_to_telemetry_unless_the_user_turned_it_off() {
-        let mut legacy = serde_json::to_value(AppSettings::default()).unwrap();
-        legacy.as_object_mut().unwrap().remove("telemetry_enabled");
-        let settings: AppSettings = serde_json::from_value(legacy).unwrap();
-        assert!(settings.telemetry_enabled);
-        let disabled = AppSettings {
-            telemetry_enabled: false,
-            ..settings
-        };
-        let restored: AppSettings =
-            serde_json::from_str(&serde_json::to_string(&disabled).unwrap()).unwrap();
-        assert!(!restored.telemetry_enabled);
-    }
+    fn loads_settings_with_the_legacy_telemetry_field() {
+        let settings = AppSettings::default();
+        let mut legacy = serde_json::to_value(&settings).unwrap();
+        legacy["telemetry_enabled"] = serde_json::Value::Bool(false);
 
-    #[test]
-    fn telemetry_opt_out_is_separate_and_fails_closed() {
-        let directory =
-            std::env::temp_dir().join(format!("vrghotspot-pref-test-{}", uuid::Uuid::new_v4()));
-        let preference = directory.join("telemetry-preference.json");
-        // No file means the user never touched the toggle: default stays on.
-        assert!(!persisted_telemetry_opt_out(&preference));
-        persist_telemetry_preference(&preference, false).unwrap();
-        assert!(persisted_telemetry_opt_out(&preference));
-        persist_telemetry_preference(&preference, true).unwrap();
-        assert!(!persisted_telemetry_opt_out(&preference));
-        // A corrupted preference file must never re-enable collection.
-        std::fs::write(&preference, "{ not json").unwrap();
-        assert!(persisted_telemetry_opt_out(&preference));
-        let _ = std::fs::remove_dir_all(&directory);
-    }
-
-    #[tokio::test]
-    async fn disabling_telemetry_persists_the_standalone_opt_out() {
-        // XDG_CONFIG_HOME is process-global; lock only around the synchronous
-        // env swap so no guard is held across an await.
-        static CONFIG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let config_home =
-            std::env::temp_dir().join(format!("vrghotspot-config-test-{}", uuid::Uuid::new_v4()));
-        let previous = {
-            let _guard = CONFIG_LOCK.lock().unwrap();
-            let previous = std::env::var_os("XDG_CONFIG_HOME");
-            unsafe { std::env::set_var("XDG_CONFIG_HOME", &config_home) };
-            previous
-        };
-        let result = async {
-            let controller = HotspotController::new(AppSettings::default());
-            controller.set_telemetry_enabled(false).await.unwrap();
-            assert!(persisted_telemetry_opt_out(&telemetry_preference_path()));
-            assert!(!controller.settings().await.telemetry_enabled);
-            // Fresh defaults after the settings file vanished must still honor
-            // the stored opt-out.
-            let settings_file = config_home.join("vrghotspot").join("settings.json");
-            std::fs::write(&settings_file, "{ unreadable settings").unwrap();
-            let recovered = AppSettings::load_or_env();
-            assert!(!recovered.telemetry_enabled);
-            assert_eq!(
-                std::fs::read_to_string(settings_file.with_extension("json.corrupt")).unwrap(),
-                "{ unreadable settings"
-            );
-            assert!(!settings_file.exists());
-
-            controller.set_telemetry_enabled(false).await.unwrap();
-            std::fs::remove_file(&settings_file).unwrap();
-            let recovered = AppSettings::load_or_env();
-            assert!(!recovered.telemetry_enabled);
-        }
-        .await;
-        {
-            let _guard = CONFIG_LOCK.lock().unwrap();
-            match previous {
-                Some(value) => unsafe { std::env::set_var("XDG_CONFIG_HOME", value) },
-                None => unsafe { std::env::remove_var("XDG_CONFIG_HOME") },
-            }
-        }
-        let _ = std::fs::remove_dir_all(&config_home);
-        result
+        let restored: AppSettings = serde_json::from_value(legacy).unwrap();
+        assert_eq!(restored, settings);
+        assert!(
+            serde_json::to_value(restored)
+                .unwrap()
+                .get("telemetry_enabled")
+                .is_none()
+        );
     }
 
     #[test]

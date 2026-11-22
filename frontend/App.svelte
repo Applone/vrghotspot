@@ -1,9 +1,10 @@
 <script lang="ts">
   import { listen } from '@tauri-apps/api/event';
   import { onMount } from 'svelte';
+  import ActionMenu from './components/ActionMenu.svelte';
   import Icon from './components/Icon.svelte';
+  import IcsReport from './components/IcsReport.svelte';
   import Notice from './components/Notice.svelte';
-  import SupportReport from './components/SupportReport.svelte';
   import type {
     AppSnapshot,
     ConflictReport,
@@ -17,11 +18,9 @@
   import Profiles from './screens/Profiles.svelte';
   import Settings from './screens/Settings.svelte';
 
-  type Route = 'home' | 'profiles' | 'settings';
-  type Report = 'windows-ics' | { error: string };
+  type Route = 'home' | 'settings';
   type Message = ErrorMessage & {
     problem?: boolean;
-    error?: string;
     sharing?: boolean;
   };
 
@@ -32,13 +31,16 @@
 
   let snapshot = $state.raw<AppSnapshot | null>(null);
   let route = $state<Route>('home');
+  let profiles = $state<{
+    pasteFromClipboard: () => Promise<void>;
+    createProfile: () => void;
+  }>();
   let message = $state<Message | null>(null);
-  let report = $state<Report | null>(null);
+  let showIcsReport = $state(false);
   let conflicts = $state<ConflictReport | null>(null);
   let busy = $state(false);
   let starting = $state(false);
   let stopping = $state(false);
-  let telemetryBusy = $state(false);
   let retry = $state<{ attempt: number; seconds: number } | null>(null);
 
   let pollFailures = 0;
@@ -55,11 +57,9 @@
   }
 
   function showError(error: unknown, fallback?: string, sharing = false) {
-    const raw = error instanceof Error ? error.message : String(error ?? '');
     message = {
       ...describeError(error, fallback),
       problem: true,
-      error: raw,
       sharing,
     };
   }
@@ -150,7 +150,7 @@
     fallback?: string,
     success?: string,
   ): Promise<boolean> {
-    if (busy || stopping || telemetryBusy) return false;
+    if (busy || stopping) return false;
     busy = true;
     message = null;
     try {
@@ -178,20 +178,27 @@
         ).join('');
         await api.saveSettings({ ...settings, hotspot_passphrase: password });
       }
-      if (!settings.profiles.length) {
+      await api.completeOnboarding();
+      for (const subscription of settings.subscriptions) {
+        if (
+          subscription.last_refreshed ||
+          settings.profiles.some(
+            (profile) => profile.subscription_id === subscription.id,
+          )
+        )
+          continue;
         try {
-          await api.refreshSubscription();
+          await api.refreshSubscription(subscription.id);
         } catch (error) {
           showError(error, 'Не удалось обновить подписку');
         }
       }
-      await api.completeOnboarding();
     }, 'Не удалось завершить настройку');
   }
 
   async function start(ssid?: string, password?: string) {
     const settings = snapshot?.settings;
-    if (!settings || busy || stopping || telemetryBusy) return;
+    if (!settings || busy || stopping) return;
     cancelStart = false;
     starting = true;
     try {
@@ -232,20 +239,6 @@
     }
   }
 
-  async function setTelemetry(enabled: boolean) {
-    if (telemetryBusy || busy) return;
-    telemetryBusy = true;
-    message = null;
-    try {
-      await api.setTelemetryEnabled(enabled);
-    } catch (error) {
-      showError(error, 'Не удалось сохранить настройку телеметрии');
-    } finally {
-      await refresh();
-      telemetryBusy = false;
-    }
-  }
-
   async function copy(value: string) {
     const copied = await copyText(value);
     showFeedback(copied ? 'Скопировано' : 'Не удалось скопировать');
@@ -254,12 +247,11 @@
   $effect(() => {
     if (
       !retry ||
-      telemetryBusy ||
       retry.attempt >= RETRY_LIMIT ||
       busy ||
       stopping ||
       snapshot?.status !== 'Stopped' ||
-      report
+      showIcsReport
     )
       return;
     const timer = window.setTimeout(() => {
@@ -292,18 +284,44 @@
       >
         <Icon name="arrow_back" />
       </button>
-    {/if}
-    <span class="brand">VRG Hotspot</span>
-    {#if snapshot && route === 'home'}
+    {:else if snapshot}
       <button
         type="button"
-        class="icon-button settings-button"
+        class="icon-button"
         title="Настройки"
         aria-label="Настройки"
         onclick={() => navigate('settings')}
       >
         <Icon name="settings" />
       </button>
+    {/if}
+    {#if snapshot?.settings.onboarding_complete && route === 'home'}
+      <ActionMenu
+        icon="add"
+        label="Добавить профиль или подписку"
+        disabled={busy || stopping || !profiles}
+      >
+        {#snippet children(close)}
+          <button
+            type="button"
+            onclick={() => {
+              close();
+              void profiles?.pasteFromClipboard();
+            }}
+          >
+            <Icon name="content_paste" /> Вставить из буфера обмена
+          </button>
+          <button
+            type="button"
+            onclick={() => {
+              close();
+              profiles?.createProfile();
+            }}
+          >
+            <Icon name="edit" /> Ручной ввод
+          </button>
+        {/snippet}
+      </ActionMenu>
     {/if}
   </div>
 </header>
@@ -337,7 +355,7 @@
         <button
           type="button"
           class="button text"
-          onclick={() => (report = 'windows-ics')}
+          onclick={() => (showIcsReport = true)}
         >
           Просмотреть отчёт
         </button>
@@ -362,17 +380,6 @@
         <p>{message.technical}</p>
       {/if}
       <div class="actions">
-        {#if message.error && snapshot?.reports_configured}
-          <button
-            type="button"
-            class="button text"
-            onclick={() => {
-              if (message?.error) report = { error: message.error };
-            }}
-          >
-            Подготовить отчёт
-          </button>
-        {/if}
         <button
           type="button"
           class="button text"
@@ -419,9 +426,7 @@
     <Settings
       {snapshot}
       busy={busy || stopping}
-      {telemetryBusy}
       {conflicts}
-      onTelemetry={setTelemetry}
       onSave={(next) =>
         runTask(
           () => api.saveSettings(next),
@@ -445,61 +450,54 @@
       <span class="list-icon"><Icon name="wifi_tethering" /></span>
       <h1>Первый запуск</h1>
       <p class="muted">
-        Начальная настройка создаст пароль точки доступа и загрузит профили из
-        подписки.
+        Начальная настройка сохранит пароль точки доступа.
+        {#if snapshot.settings.subscriptions.length}
+          Приложение также попробует загрузить профили из настроенных подписок.
+        {/if}
       </p>
       <div class="actions">
         <button
           type="button"
           class="button filled"
-          disabled={busy || telemetryBusy}
+          disabled={busy}
           onclick={setup}
         >
           {busy ? 'Настройка…' : 'Продолжить'}
         </button>
       </div>
     </section>
-  {:else if route === 'profiles'}
-    <Profiles
-      settings={snapshot.settings}
-      busy={busy || stopping || snapshot.status !== 'Stopped'}
-      onSelect={(id) =>
-        runTask(() => api.selectProfile(id), 'Не удалось выбрать профиль')}
-      onDelete={(id) =>
-        runTask(
-          () => api.deleteProfile(id),
-          'Не удалось удалить профиль',
-          'Профиль удалён',
-        )}
-      onImport={(source) =>
-        runTask(
-          () => api.importSubscription(source),
-          'Не удалось импортировать профиль',
-          'Импорт завершён',
-        )}
-      onRefresh={() =>
-        runTask(
-          api.refreshSubscription,
-          'Не удалось обновить подписку',
-          'Подписка обновлена',
-        )}
-    />
   {:else}
+    {@const current = snapshot}
     <Home
-      {snapshot}
-      busy={busy || telemetryBusy}
+      snapshot={current}
+      {busy}
       {starting}
       {stopping}
       onStart={start}
       onStop={stop}
       onCopy={copy}
-      onProfiles={() => navigate('profiles')}
-    />
+    >
+      {#snippet profilesContent()}
+        <Profiles
+          bind:this={profiles}
+          settings={current.settings}
+          selectionDisabled={busy || stopping || current.status !== 'Stopped'}
+          busy={busy || stopping}
+          onSelect={(id) =>
+            runTask(() => api.selectProfile(id), 'Не удалось выбрать профиль')}
+          onSaved={async (text) => {
+            await refresh();
+            showFeedback(text);
+          }}
+          onError={showError}
+        />
+      {/snippet}
+    </Home>
   {/if}
 </main>
 
-{#if report}
-  <SupportReport kind={report} onClose={() => (report = null)} />
+{#if showIcsReport}
+  <IcsReport onClose={() => (showIcsReport = false)} />
 {/if}
 
 <div class="snackbar" class:visible={!!feedback} role="status">{feedback}</div>

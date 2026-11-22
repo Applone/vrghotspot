@@ -1,18 +1,40 @@
-use super::protocol::{
-    DiagnosticLog, MAX_LOG_ENTRIES, MAX_MESSAGE_BYTES, MAX_REPORT_BYTES, ReportContext,
-    ReportReceipt, SCHEMA_VERSION, SupportReport,
-};
-use super::redaction::{Redactor, truncate};
 use super::transport::{Endpoint, limited_body};
-use crate::app::{AppSettings, HotspotStatus};
-use crate::ui::logs::LogEntry;
-use serde::Serialize;
+use crate::os::hotspot::{ICS_CLIENT_DLL, IcsMismatchReason, IcsSignatureMismatch};
+use base64::{Engine, engine::general_purpose::STANDARD};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
+use std::io::Read;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use uuid::Uuid;
-#[cfg(any(windows, test))]
-use {super::protocol::WindowsIcsDiagnostic, crate::os::hotspot::IcsSignatureMismatch};
+
+const SCHEMA_VERSION: u32 = 2;
+const MAX_REPORT_BYTES: usize = 2 * 1024 * 1024;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReportReceipt {
+    pub report_id: Uuid,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IcsReport {
+    schema_version: u32,
+    report_id: Uuid,
+    windows_ics: WindowsIcsDiagnostic,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WindowsIcsDiagnostic {
+    dll_name: String,
+    dll_sha256: String,
+    dll_base64: String,
+    reason: IcsMismatchReason,
+    windows_build: String,
+}
 
 const MAX_PENDING_REPORTS: usize = 4;
 const REPORT_EXPIRY: Duration = Duration::from_secs(30 * 60);
@@ -23,8 +45,6 @@ pub struct ReportPreview {
     pub report_id: Uuid,
     pub destination: String,
     pub payload: String,
-    pub log_count: usize,
-    pub logs_truncated: bool,
 }
 
 struct PendingReport {
@@ -36,24 +56,18 @@ struct PendingReport {
 #[derive(Clone)]
 pub struct ReportManager {
     endpoint: Result<Option<Endpoint>, String>,
-    started_at: Instant,
     pending: Arc<Mutex<VecDeque<PendingReport>>>,
     upload: Arc<tokio::sync::Mutex<Option<Instant>>>,
 }
 
-impl Default for ReportManager {
-    fn default() -> Self {
-        Self::new(Ok(None))
-    }
-}
-
 impl ReportManager {
-    /// The report destination is baked in at build time; see
-    /// [`super::transport::build_value`].
-    pub fn from_env() -> Self {
+    #[cfg(windows)]
+    pub fn from_build() -> Self {
         Self::new(
-            super::transport::build_value(option_env!("VRG_SUPPORT_ENDPOINT"))
-                .map(|value| Endpoint::parse(&value))
+            option_env!("VRG_SUPPORT_ENDPOINT")
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(Endpoint::parse)
                 .transpose(),
         )
     }
@@ -61,12 +75,12 @@ impl ReportManager {
     fn new(endpoint: Result<Option<Endpoint>, String>) -> Self {
         Self {
             endpoint,
-            started_at: Instant::now(),
             pending: Arc::new(Mutex::new(VecDeque::new())),
             upload: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
+    #[cfg(windows)]
     pub fn configured(&self) -> bool {
         self.endpoint.as_ref().is_ok_and(Option::is_some)
     }
@@ -79,40 +93,13 @@ impl ReportManager {
             .ok_or_else(|| "support report server is not configured for this build".to_owned())
     }
 
-    pub fn prepare(
-        &self,
-        error: &str,
-        settings: &AppSettings,
-        status: HotspotStatus,
-        entries: &[LogEntry],
-        redactor: &Redactor,
-    ) -> Result<ReportPreview, String> {
-        if error.trim().is_empty() || error.len() > 64 * 1024 {
-            return Err("invalid report error length".to_owned());
-        }
-        let mut report = self.new_report(
-            truncate(&redactor.redact(error), MAX_MESSAGE_BYTES),
-            settings,
-            status,
-        );
-        append_logs(&mut report, entries, redactor)?;
-        self.enqueue(report)
-    }
-
-    #[cfg(any(windows, test))]
     pub(crate) fn prepare_ics_report(
         &self,
         mismatch: IcsSignatureMismatch,
-        dll: impl std::io::Read,
+        dll: impl Read,
         windows_build: String,
-        settings: &AppSettings,
-        status: HotspotStatus,
     ) -> Result<ReportPreview, String> {
-        use base64::{Engine, engine::general_purpose::STANDARD};
-        use sha2::{Digest, Sha256};
-        use std::io::Read;
-
-        // Leave the final envelope size check to SupportReport::validate.
+        let endpoint = self.endpoint()?;
         let max_dll_bytes = MAX_REPORT_BYTES / 4 * 3;
         let mut bytes = Vec::new();
         dll.take(max_dll_bytes as u64 + 1)
@@ -121,65 +108,29 @@ impl ReportManager {
         if bytes.len() > max_dll_bytes {
             return Err("report exceeds size limit".to_owned());
         }
-        if hex::encode(Sha256::digest(&bytes)) != mismatch.sha256 {
+        if bytes.is_empty() || hex::encode(Sha256::digest(&bytes)) != mismatch.sha256 {
             return Err("system DLL changed since signature verification".to_owned());
         }
-        self.enqueue(SupportReport {
-            windows_ics: Some(WindowsIcsDiagnostic {
-                dll_name: crate::os::hotspot::ICS_CLIENT_DLL.to_owned(),
-                dll_sha256: mismatch.sha256,
-                dll_base64: Some(STANDARD.encode(bytes)),
-                reason: mismatch.reason,
-                windows_build,
-            }),
-            ..self.new_report(
-                "hnetcfgclient.dll signature mismatch".to_owned(),
-                settings,
-                status,
-            )
-        })
-    }
 
-    fn new_report(
-        &self,
-        error: String,
-        settings: &AppSettings,
-        status: HotspotStatus,
-    ) -> SupportReport {
-        SupportReport {
+        let report = IcsReport {
             schema_version: SCHEMA_VERSION,
             report_id: Uuid::new_v4(),
-            created_at: unix_seconds(SystemTime::now()),
-            error,
-            context: ReportContext {
-                app_version: env!("CARGO_PKG_VERSION").to_owned(),
-                core_version: truncate(
-                    option_env!("VRG_MIHOMO_VERSION_BUILT").unwrap_or("unknown"),
-                    128,
-                ),
-                os: std::env::consts::OS.to_owned(),
-                arch: std::env::consts::ARCH.to_owned(),
-                uptime_seconds: self.started_at.elapsed().as_secs(),
-                hotspot_status: format!("{status:?}"),
-                sharing_enabled: settings.enable_sharing,
-                telemetry_enabled: settings.telemetry_enabled,
-                profile_count: settings.profiles.len(),
+            windows_ics: WindowsIcsDiagnostic {
+                dll_name: ICS_CLIENT_DLL.to_owned(),
+                dll_sha256: mismatch.sha256,
+                dll_base64: STANDARD.encode(bytes),
+                reason: mismatch.reason,
+                windows_build,
             },
-            logs: Vec::new(),
-            logs_truncated: false,
-            windows_ics: None,
+        };
+        let payload = serde_json::to_string(&report).map_err(|error| error.to_string())?;
+        if payload.len() > MAX_REPORT_BYTES {
+            return Err("report exceeds size limit".to_owned());
         }
-    }
-
-    fn enqueue(&self, report: SupportReport) -> Result<ReportPreview, String> {
-        let endpoint = self.endpoint()?;
-        report.validate().map_err(str::to_owned)?;
         let preview = ReportPreview {
             report_id: report.report_id,
-            destination: endpoint.display(),
-            payload: serde_json::to_string(&report).map_err(|error| error.to_string())?,
-            log_count: report.logs.len(),
-            logs_truncated: report.logs_truncated,
+            destination: endpoint.url("v1/reports").to_string(),
+            payload,
         };
         let mut pending = self
             .pending
@@ -200,12 +151,6 @@ impl ReportManager {
     pub fn discard(&self, report_id: Uuid) {
         if let Ok(mut pending) = self.pending.lock() {
             pending.retain(|report| report.preview.report_id != report_id);
-        }
-    }
-
-    pub fn clear(&self) {
-        if let Ok(mut pending) = self.pending.lock() {
-            pending.clear();
         }
     }
 
@@ -272,110 +217,39 @@ impl ReportManager {
     }
 }
 
-fn append_logs(
-    report: &mut SupportReport,
-    entries: &[LogEntry],
-    redactor: &Redactor,
-) -> Result<(), String> {
-    let mut budget = MAX_REPORT_BYTES.saturating_sub(32 * 1024);
-    for entry in entries.iter().rev().take(MAX_LOG_ENTRIES) {
-        let message = redactor.redact(&entry.message);
-        report.logs_truncated |= message.len() > MAX_MESSAGE_BYTES;
-        let entry = DiagnosticLog {
-            timestamp: unix_seconds(entry.timestamp),
-            level: entry.level.to_string(),
-            target: truncate(&redactor.redact(&entry.target), 256),
-            message: truncate(&message, MAX_MESSAGE_BYTES),
-        };
-        let size = serde_json::to_vec(&entry)
-            .map_err(|error| error.to_string())?
-            .len()
-            + 1;
-        if size > budget {
-            report.logs_truncated = true;
-            break;
-        }
-        budget -= size;
-        report.logs.push(entry);
-    }
-    report.logs_truncated |= report.logs.len() < entries.len();
-    report.logs.reverse();
-    Ok(())
-}
-
-fn unix_seconds(time: SystemTime) -> u64 {
-    time.duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
-
 #[cfg(test)]
 mod tests {
+    use super::super::test_server::TestServer;
     use super::*;
-    use crate::ui::logs::InMemoryLogStore;
 
-    #[tokio::test]
-    async fn sending_requires_consent_even_when_telemetry_is_disabled() {
-        let manager = ReportManager::default();
-        let result = manager.send(Uuid::new_v4(), false).await.unwrap_err();
-        assert!(result.contains("consent"));
-    }
-
-    #[test]
-    fn preparing_is_local_redacted_and_retains_original_error_context() {
-        use tracing_subscriber::layer::SubscriberExt;
-        let manager =
-            ReportManager::new(Ok(Some(Endpoint::parse("http://127.0.0.1:8090").unwrap())));
-        let logs = InMemoryLogStore::default();
-        let subscriber = tracing_subscriber::registry()
-            .with(crate::ui::logs::InMemoryLogLayer::new(logs.clone()));
-        tracing::subscriber::with_default(subscriber, || {
-            tracing::info!(target: "core_bridge", "before error secret-value");
-        });
-        let mut redactor = Redactor::default();
-        redactor.remember("secret-value");
-        let preview = manager
-            .prepare(
-                "full error secret-value",
-                &AppSettings::default(),
-                HotspotStatus::Stopped,
-                &logs.entries(),
-                &redactor,
+    fn prepare(manager: &ReportManager, dll: &[u8]) -> ReportPreview {
+        manager
+            .prepare_ics_report(
+                IcsSignatureMismatch {
+                    sha256: hex::encode(Sha256::digest(dll)),
+                    reason: IcsMismatchReason::UnrecognizedDll,
+                },
+                dll,
+                "19045.6456".to_owned(),
             )
-            .unwrap();
-        assert!(!preview.payload.contains("secret-value"));
-        let report: SupportReport = serde_json::from_str(&preview.payload).unwrap();
-        assert_eq!(report.report_id, preview.report_id);
-        assert!(!report.context.telemetry_enabled);
-        assert_eq!(report.logs.len(), 1);
-        assert_eq!(report.logs[0].target, "core_bridge");
-        logs.clear();
-        assert_eq!(
-            serde_json::from_str::<SupportReport>(&preview.payload)
-                .unwrap()
-                .logs
-                .len(),
-            1
-        );
-        manager.discard(preview.report_id);
-        assert!(manager.pending.lock().unwrap().is_empty());
-    }
-
-    async fn prepared(manager: &ReportManager, error: &str) -> Result<ReportPreview, String> {
-        manager.prepare(
-            error,
-            &AppSettings::default(),
-            HotspotStatus::Stopped,
-            &[],
-            &Redactor::default(),
-        )
+            .unwrap()
     }
 
     #[tokio::test]
-    async fn consented_reports_upload_once_and_return_the_id_support_can_look_up() {
-        let server = super::super::test_server::TestServer::new(false, Duration::ZERO).await;
+    async fn only_consented_ics_reports_are_uploaded_and_receipts_prevent_resending() {
+        let server = TestServer::new().await;
         let manager = ReportManager::new(Ok(Some(server.endpoint.clone())));
-        let preview = prepared(&manager, "hotspot failed to start").await.unwrap();
+        let dll = b"MZ\0\xffexample DLL bytes";
+        let preview = prepare(&manager, dll);
+
+        assert!(
+            manager
+                .send(preview.report_id, false)
+                .await
+                .unwrap_err()
+                .contains("consent")
+        );
+        assert!(server.requests().is_empty());
         server.reply(
             201,
             serde_json::to_vec(&ReportReceipt {
@@ -384,119 +258,69 @@ mod tests {
             .unwrap(),
         );
 
-        let receipt = manager.send(preview.report_id, true).await.unwrap();
-        assert_eq!(receipt.report_id, preview.report_id);
-        let requests = server.requests();
-        assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].path, "/v1/reports");
-        let uploaded: SupportReport = serde_json::from_slice(&requests[0].body).unwrap();
-        assert_eq!(uploaded.report_id, preview.report_id);
-
-        assert_eq!(
-            manager
-                .send(preview.report_id, true)
-                .await
-                .unwrap()
-                .report_id,
-            preview.report_id
-        );
-        assert_eq!(server.requests().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn windows_ics_details_are_only_sent_after_explicit_consent() {
-        use crate::os::hotspot::IcsMismatchReason;
-
-        let server = super::super::test_server::TestServer::new(false, Duration::ZERO).await;
-        let manager = ReportManager::new(Ok(Some(server.endpoint.clone())));
-        use base64::{Engine, engine::general_purpose::STANDARD};
-        use sha2::{Digest, Sha256};
-        let dll = b"MZ\0\xffexample DLL bytes";
-        let hash = hex::encode(Sha256::digest(dll));
-        let preview = manager
-            .prepare_ics_report(
-                IcsSignatureMismatch {
-                    sha256: hash.clone(),
-                    reason: IcsMismatchReason::UnrecognizedDll,
-                },
-                &dll[..],
-                "19045.6456".to_owned(),
-                &AppSettings::default(),
-                HotspotStatus::Running,
-            )
-            .unwrap();
-
-        assert!(manager.send(preview.report_id, false).await.is_err());
-        assert!(server.requests().is_empty());
-        server.reply(
-            200,
-            serde_json::to_vec(&ReportReceipt {
-                report_id: preview.report_id,
-            })
-            .unwrap(),
-        );
-        manager.send(preview.report_id, true).await.unwrap();
-
+        for _ in 0..2 {
+            assert_eq!(
+                manager
+                    .send(preview.report_id, true)
+                    .await
+                    .unwrap()
+                    .report_id,
+                preview.report_id
+            );
+        }
         let requests = server.requests();
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].path, "/v1/reports");
         assert_eq!(requests[0].body, preview.payload.as_bytes());
-        let report: SupportReport = serde_json::from_slice(&requests[0].body).unwrap();
-        assert!(!report.context.telemetry_enabled);
-        assert!(report.logs.is_empty());
-        let mut diagnostic = report.windows_ics.unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+        assert_eq!(payload.as_object().unwrap().len(), 3);
+        let report: IcsReport = serde_json::from_value(payload).unwrap();
+        assert_eq!(report.schema_version, 2);
+        assert_eq!(report.report_id, preview.report_id);
+        assert_eq!(report.windows_ics.dll_name, ICS_CLIENT_DLL);
         assert_eq!(
-            STANDARD
-                .decode(diagnostic.dll_base64.take().unwrap())
-                .unwrap(),
-            dll
+            report.windows_ics.reason,
+            IcsMismatchReason::UnrecognizedDll
         );
+        assert_eq!(report.windows_ics.windows_build, "19045.6456");
         assert_eq!(
-            diagnostic,
-            WindowsIcsDiagnostic {
-                dll_name: "hnetcfgclient.dll".to_owned(),
-                dll_sha256: hash,
-                dll_base64: None,
-                reason: IcsMismatchReason::UnrecognizedDll,
-                windows_build: "19045.6456".to_owned(),
-            }
+            report.windows_ics.dll_sha256,
+            hex::encode(Sha256::digest(dll))
         );
-        assert!(
-            !prepared(&manager, "network failure")
-                .await
-                .unwrap()
-                .payload
-                .contains("windows_ics")
-        );
+        assert_eq!(STANDARD.decode(report.windows_ics.dll_base64).unwrap(), dll);
     }
 
     #[test]
     fn changed_or_oversized_dll_cannot_be_queued_for_upload() {
         let manager = ReportManager::new(Ok(Some(Endpoint::parse("http://127.0.0.1").unwrap())));
-        for (dll, message) in [
-            (vec![0; 32], "system DLL changed"),
-            (vec![0; MAX_REPORT_BYTES / 4 * 3 + 1], "size limit"),
+        for (dll, hash_matches, expected) in [
+            (vec![0; 32], false, "system DLL changed"),
+            (vec![0; MAX_REPORT_BYTES / 4 * 3 + 1], false, "size limit"),
+            (vec![0; MAX_REPORT_BYTES / 4 * 3], true, "size limit"),
         ] {
+            let sha256 = if hash_matches {
+                hex::encode(Sha256::digest(&dll))
+            } else {
+                "a".repeat(64)
+            };
             let result = manager.prepare_ics_report(
                 IcsSignatureMismatch {
-                    sha256: "a".repeat(64),
-                    reason: crate::os::hotspot::IcsMismatchReason::UnrecognizedDll,
+                    sha256,
+                    reason: IcsMismatchReason::UnrecognizedDll,
                 },
                 dll.as_slice(),
                 "19045".to_owned(),
-                &AppSettings::default(),
-                HotspotStatus::Running,
             );
-            assert!(result.err().unwrap().contains(message));
+            assert!(result.err().unwrap().contains(expected));
         }
         assert!(manager.pending.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
     async fn a_mismatched_receipt_is_not_shown_to_the_user_as_success() {
-        let server = super::super::test_server::TestServer::new(false, Duration::ZERO).await;
+        let server = TestServer::new().await;
         let manager = ReportManager::new(Ok(Some(server.endpoint.clone())));
-        let preview = prepared(&manager, "tunnel unreachable").await.unwrap();
+        let preview = prepare(&manager, b"MZ example");
         server.reply(
             200,
             serde_json::to_vec(&ReportReceipt {
@@ -514,33 +338,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn every_prepared_report_gets_its_own_random_id() {
-        let manager =
-            ReportManager::new(Ok(Some(Endpoint::parse("http://127.0.0.1:8090").unwrap())));
-        let first = prepared(&manager, "first failure").await.unwrap();
-        let second = prepared(&manager, "second failure").await.unwrap();
-        assert_ne!(first.report_id, second.report_id);
-        for preview in [&first, &second] {
-            assert!(super::super::protocol::is_random_id(&preview.report_id));
-        }
-    }
-
-    #[tokio::test]
-    async fn discarded_and_expired_reports_cannot_be_sent() {
-        let server = super::super::test_server::TestServer::new(false, Duration::ZERO).await;
+    async fn missing_or_discarded_reports_cannot_be_sent() {
+        let server = TestServer::new().await;
         let manager = ReportManager::new(Ok(Some(server.endpoint.clone())));
-        let discarded = prepared(&manager, "discarded failure").await.unwrap();
-        manager.discard(discarded.report_id);
-        assert!(
-            manager
-                .send(discarded.report_id, true)
-                .await
-                .unwrap_err()
-                .contains("expired")
-        );
-        assert!(
-            server.requests().is_empty(),
-            "nothing may leave the machine"
-        );
+        let first = prepare(&manager, b"MZ example");
+        let second = prepare(&manager, b"MZ example");
+        assert_ne!(first.report_id, second.report_id);
+        for id in [first.report_id, second.report_id] {
+            assert_eq!(id.get_version(), Some(uuid::Version::Random));
+            assert_eq!(id.get_variant(), uuid::Variant::RFC4122);
+        }
+        manager.discard(first.report_id);
+        for id in [first.report_id, Uuid::new_v4()] {
+            assert!(
+                manager
+                    .send(id, true)
+                    .await
+                    .unwrap_err()
+                    .contains("expired")
+            );
+        }
+        assert!(server.requests().is_empty());
     }
 }

@@ -20,11 +20,25 @@ export type SubscriptionInfo = {
   expires_at?: number | null;
 };
 
+export type SubscriptionOptions = {
+  title: string;
+  url: string;
+  auto_refresh_minutes: number;
+  send_hwid: boolean;
+};
+
+export type StoredSubscription = SubscriptionOptions & {
+  id: string;
+  info: SubscriptionInfo;
+  last_refreshed?: number | null;
+};
+
 export type StoredVpnProfile = {
   id: string;
   name: string;
   proxy: unknown;
-  source_url?: string | null;
+  subscription_id?: string | null;
+  proxy_override?: unknown;
 };
 
 export type AppSettings = {
@@ -35,10 +49,8 @@ export type AppSettings = {
   enable_sharing: boolean;
   hotspot_ssid: string;
   hotspot_passphrase: string;
-  subscription_url: string;
-  subscription_info: SubscriptionInfo;
+  subscriptions: StoredSubscription[];
   onboarding_complete: boolean;
-  telemetry_enabled: boolean;
   geo_data: GeoDataSettings;
 };
 
@@ -74,20 +86,10 @@ export type ConflictReport = {
   conflicting_processes: string[];
 };
 
-export type TelemetryStatus = {
-  configured: boolean;
-  active: boolean;
-  last_delivery_unix?: number | null;
-  consecutive_failures: number;
-  next_attempt_in_seconds?: number | null;
-};
-
 export type ReportPreview = {
   report_id: string;
   destination: string;
   payload: string;
-  log_count: number;
-  logs_truncated: boolean;
 };
 
 export type ReportReceipt = {
@@ -106,7 +108,6 @@ export type AppSnapshot = {
   sharing_active: boolean;
   ics_signature_mismatch: boolean;
   logs: LogEntry[];
-  telemetry: TelemetryStatus;
   reports_configured: boolean;
 };
 
@@ -128,20 +129,32 @@ export const api = {
   snapshot: () => invoke<AppSnapshot>('get_snapshot'),
   saveSettings: (settings: AppSettings) =>
     invoke<AppSettings>('save_settings', { settings }),
-  setTelemetryEnabled: (enabled: boolean) =>
-    invoke<AppSettings>('set_telemetry_enabled', { enabled }),
-  prepareSupportReport: (error: string) =>
-    invoke<ReportPreview>('prepare_support_report', { error }),
   prepareIcsReport: () => invoke<ReportPreview>('prepare_ics_report'),
-  sendSupportReport: (reportId: string, consent: boolean) =>
-    invoke<ReportReceipt>('send_support_report', { reportId, consent }),
-  discardSupportReport: (reportId: string) =>
-    invoke<void>('discard_support_report', { reportId }),
-  importSubscription: (source: string) =>
-    invoke<AppSettings>('import_subscription', { source }),
-  refreshSubscription: () => invoke<AppSettings>('refresh_subscription'),
+  sendIcsReport: (reportId: string, consent: boolean) =>
+    invoke<ReportReceipt>('send_ics_report', { reportId, consent }),
+  discardIcsReport: (reportId: string) =>
+    invoke<void>('discard_ics_report', { reportId }),
+  readClipboard: () => invoke<string>('read_clipboard'),
+  importProfiles: (source: string) =>
+    invoke<void>('import_profiles', { source }),
+  getProfileYaml: (profileId: string) =>
+    invoke<string>('get_profile_yaml', { profileId }),
+  saveProfileYaml: (profileId: string | null, yaml: string) =>
+    invoke<void>('save_profile_yaml', { profileId, yaml }),
+  addSubscription: (options: SubscriptionOptions) =>
+    invoke<void>('add_subscription', { options }),
+  updateSubscription: (subscriptionId: string, options: SubscriptionOptions) =>
+    invoke<void>('update_subscription', { subscriptionId, options }),
+  refreshSubscription: (subscriptionId: string) =>
+    invoke<void>('refresh_subscription', { subscriptionId }),
+  deleteSubscription: (subscriptionId: string) =>
+    invoke<void>('delete_subscription', { subscriptionId }),
+  pingSubscription: (subscriptionId: string) =>
+    invoke<Record<string, number | null>>('ping_subscription', {
+      subscriptionId,
+    }),
   completeOnboarding: () => invoke<AppSettings>('complete_onboarding'),
-  selectProfile: (profileId: string) =>
+  selectProfile: (profileId: string | null) =>
     invoke<AppSettings>('select_profile', { profileId }),
   deleteProfile: (profileId: string) =>
     invoke<AppSettings>('delete_profile', { profileId }),
@@ -210,24 +223,26 @@ const knownErrors: { match: RegExp; title: string; detail?: string }[] = [
   },
   {
     match: /did not contain a usable proxy/i,
-    title: 'В подписке нет поддерживаемых профилей',
+    title: 'Не найдено поддерживаемых профилей VPN',
   },
   { match: /invalid proxy link/i, title: 'Недопустимая ссылка на профиль VPN' },
   {
-    match: /no subscription is configured/i,
-    title: 'Адрес подписки не задан',
-    detail:
-      'Укажите адрес в дополнительных настройках или добавьте профиль по ссылке.',
+    match: /the subscription address must be an HTTPS URL/i,
+    title: 'Укажите HTTPS-адрес подписки',
+  },
+  {
+    match: /a subscription with this address already exists/i,
+    title: 'Подписка с таким адресом уже добавлена',
+  },
+  {
+    match: /a proxy mapping with a type/i,
+    title: 'Укажите тип прокси, сервер и порт от 1 до 65535',
   },
   {
     match: /not authorized|privileged network configuration failed|pkexec/i,
     title: 'Не удалось получить права на настройку сети',
   },
   { match: /NetworkManager|D-Bus/i, title: 'Ошибка сетевой службы' },
-  {
-    match: /telemetry configuration failed/i,
-    title: 'Не удалось изменить настройку телеметрии',
-  },
 ];
 
 export function describeError(

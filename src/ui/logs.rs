@@ -1,4 +1,3 @@
-use crate::telemetry::Telemetry;
 use std::collections::VecDeque;
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -98,7 +97,8 @@ impl InMemoryLogStore {
         if self.capacity == 0 {
             return;
         }
-        entry.message = crate::telemetry::redaction::truncate(&entry.message, 64 * 1024);
+        let limit = entry.message.floor_char_boundary(64 * 1024);
+        entry.message.truncate(limit);
         if let Ok(mut entries) = self.inner.lock() {
             while entries.len() >= self.capacity {
                 entries.pop_front();
@@ -117,19 +117,11 @@ impl Default for InMemoryLogStore {
 #[derive(Debug, Clone)]
 pub struct InMemoryLogLayer {
     store: InMemoryLogStore,
-    telemetry: Telemetry,
 }
 
 impl InMemoryLogLayer {
     pub fn new(store: InMemoryLogStore) -> Self {
-        Self {
-            store,
-            telemetry: Telemetry::default(),
-        }
-    }
-
-    pub fn with_telemetry(store: InMemoryLogStore, telemetry: Telemetry) -> Self {
-        Self { store, telemetry }
+        Self { store }
     }
 }
 
@@ -151,7 +143,6 @@ where
                 message = format!("[{context}] {message}", context = names.join(" > "));
             }
         }
-        self.telemetry.log(metadata.level(), metadata.target());
         self.store.push(LogEntry {
             timestamp: SystemTime::now(),
             level: *metadata.level(),
