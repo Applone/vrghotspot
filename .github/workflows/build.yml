@@ -56,7 +56,7 @@ jobs:
             test -x /usr/bin/vrghotspot
             test -s /usr/share/applications/vrghotspot.desktop
             test -s /usr/share/icons/hicolor/32x32/apps/vrghotspot.png
-            test -s /usr/share/polkit-1/actions/app1oneme.vrghotspot.policy
+            test -s /usr/share/polkit-1/actions/applonelabs.vrghotspot.policy
             libs=$(ldd /usr/bin/vrghotspot)
             if [[ $libs == *"not found"* ]]; then echo "$libs"; exit 1; fi
             vrghotspot-diagnostics --help

@@ -22,8 +22,8 @@ contents:
     dst: /usr/bin/vrghotspot-diagnostics
     file_info:
       mode: 0755
-  - src: packaging/app1oneme.vrghotspot.policy
-    dst: /usr/share/polkit-1/actions/app1oneme.vrghotspot.policy
+  - src: packaging/applonelabs.vrghotspot.policy
+    dst: /usr/share/polkit-1/actions/applonelabs.vrghotspot.policy
     file_info:
       mode: 0644
   - src: packaging/vrghotspot.desktop

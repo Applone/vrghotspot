@@ -1,5 +1,4 @@
 /target
-/staging
 /artifacts/
 # Container build caches and per-format target dirs (see local_build.sh)
 /.buildcache

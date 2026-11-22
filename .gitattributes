@@ -1,2 +1,4 @@
 * text=auto eol=lf
+Cargo.lock -diff
+bun.lock -diff
 src/third_party/** -text
