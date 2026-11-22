@@ -1,65 +1,98 @@
 version: 2
 updates:
-  - package-ecosystem: cargo
-    directory: /
+  - package-ecosystem: "gomod"
+    directory: "/src/third_party/core_bridge"
     schedule:
-      interval: monthly
+      interval: "monthly"
     open-pull-requests-limit: 5
-    labels: [dependencies, rust]
+    labels:
+      - "dependencies"
+      - "go"
+    assignees:
+      - "Applone"
     commit-message:
-      prefix: chore(deps)
+      prefix: "chore(deps)"
+    groups:
+      gomod-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "rust"
+    assignees:
+      - "Applone"
+    commit-message:
+      prefix: "chore(deps)"
     groups:
       cargo-dependencies:
-        patterns: ['*']
-        update-types: [minor, patch]
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
-  - package-ecosystem: bun
-    directory: /
+  - package-ecosystem: "bun"
+    directory: "/"
     schedule:
-      interval: monthly
+      interval: "monthly"
     open-pull-requests-limit: 5
-    labels: [dependencies, frontend]
+    labels:
+      - "dependencies"
+      - "frontend"
+    assignees:
+      - "Applone"
     commit-message:
-      prefix: chore(deps)
+      prefix: "chore(deps)"
     groups:
-      frontend-dependencies:
-        patterns: ['*']
-        update-types: [minor, patch]
+      bun-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
-  - package-ecosystem: github-actions
-    directory: /
+  - package-ecosystem: "github-actions"
+    directory: "/"
     schedule:
-      interval: monthly
+      interval: "monthly"
     open-pull-requests-limit: 5
-    labels: [dependencies, ci]
+    labels:
+      - "dependencies"
+      - "ci"
+    assignees:
+      - "Applone"
     commit-message:
-      prefix: ci(deps)
+      prefix: "ci(deps)"
     groups:
-      github-actions:
-        patterns: ['*']
+      ci-dependencies:
+        patterns:
+          - "*"
 
-  - package-ecosystem: gomod
-    directory: /src/third_party/core_bridge
+  - package-ecosystem: "docker"
+    directory: "/packaging"
     schedule:
-      interval: monthly
+      interval: "monthly"
     open-pull-requests-limit: 5
-    labels: [dependencies, go]
+    labels:
+      - "dependencies"
+      - "containers"
+    assignees:
+      - "Applone"
     commit-message:
-      prefix: chore(deps)
+      prefix: "chore(deps)"
     groups:
-      go-dependencies:
-        patterns: ['*']
-        update-types: [minor, patch]
-
-  - package-ecosystem: docker
-    directory: /packaging
-    schedule:
-      interval: monthly
-    open-pull-requests-limit: 5
-    labels: [dependencies, containers]
-    commit-message:
-      prefix: chore(deps)
-    groups:
-      container-dependencies:
-        patterns: ['*']
-        update-types: [minor, patch]
+      docker-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"

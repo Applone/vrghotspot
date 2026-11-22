@@ -3,7 +3,6 @@ ARG GO_VERSION=1.27.3
 FROM docker.io/library/golang:${GO_VERSION}-bookworm AS golang
 FROM docker.io/library/rust:1.100.0-bookworm AS rust
 RUN rustup component add clippy rustfmt
-FROM docker.io/library/node:24-bookworm-slim AS node
 FROM docker.io/oven/bun:1.4.5 AS bun
 FROM ghcr.io/goreleaser/nfpm:v2.49.0 AS nfpm
 
@@ -28,7 +27,6 @@ FROM ${FORMAT} AS builder
 COPY --from=golang /usr/local/go /usr/local/go
 COPY --from=rust /usr/local/rustup /usr/local/rustup
 COPY --from=rust /usr/local/cargo/bin/ /usr/local/bin/
-COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
 COPY --from=nfpm /usr/bin/nfpm /usr/local/bin/nfpm
 ENV RUSTUP_HOME=/usr/local/rustup GOTOOLCHAIN=local PATH=/usr/local/go/bin:${PATH}

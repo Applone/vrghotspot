@@ -94,7 +94,7 @@ case " $ID ${ID_LIKE:-} " in
 esac
 native_tools() {
     local tool
-    for tool in nfpm cargo rustc go bun node gcc pkg-config; do
+    for tool in nfpm cargo rustc go bun gcc pkg-config; do
         command -v "$tool" >/dev/null || return 1
     done
     pkg-config --exists gtk+-3.0 webkit2gtk-4.1 dbus-1

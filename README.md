@@ -73,7 +73,7 @@ For local testing, the base URL may use HTTP with a loopback IP address.
 
 ## Build and verify
 
-Install current stable Rust, Go 1.26 or newer, Bun, Node.js 24 LTS, and a C toolchain. The
+Install current stable Rust, Go 1.26 or newer, Bun, and a C toolchain. The
 Mihomo source is pinned as a Git submodule in `src/third_party/mihomo`.
 Clone with `git clone --recurse-submodules`, or run
 `git submodule update --init --recursive` from an existing checkout before building.
