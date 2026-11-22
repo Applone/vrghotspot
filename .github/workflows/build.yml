@@ -84,6 +84,8 @@ jobs:
     runs-on: windows-latest
     env:
       TARGET: x86_64-pc-windows-gnu
+      # Keep the MinGW GCC driver and use LLD for the final Rust link.
+      CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=lld
     steps:
       - uses: actions/checkout@v7
         with:
@@ -94,7 +96,9 @@ jobs:
         id: mingw
         with:
           msystem: MINGW64
-          install: mingw-w64-x86_64-gcc
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-lld
 
       - name: Add MinGW to PATH
         shell: pwsh
