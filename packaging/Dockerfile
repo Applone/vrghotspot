@@ -1,10 +1,10 @@
 ARG FORMAT=deb
 ARG GO_VERSION=1.27.3
 FROM docker.io/library/golang:${GO_VERSION}-bookworm AS golang
-FROM docker.io/library/rust:1.99.1-bookworm AS rust
+FROM docker.io/library/rust:1.100.0-bookworm AS rust
 RUN rustup component add clippy rustfmt
 FROM docker.io/library/node:24-bookworm-slim AS node
-FROM docker.io/oven/bun:1.4.4 AS bun
+FROM docker.io/oven/bun:1.4.5 AS bun
 FROM ghcr.io/goreleaser/nfpm:v2.49.0 AS nfpm
 
 FROM docker.io/library/debian:13-slim AS deb-runtime
