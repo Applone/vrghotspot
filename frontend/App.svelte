@@ -1,13 +1,9 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
+  import { onMount } from 'svelte';
   import Icon from './components/Icon.svelte';
   import Notice from './components/Notice.svelte';
   import SupportReport from './components/SupportReport.svelte';
-  import Home from './screens/Home.svelte';
-  import Profiles from './screens/Profiles.svelte';
-  import Settings from './screens/Settings.svelte';
-  import { api, describeError, RUNTIME_EVENT } from './lib/api';
   import type {
     AppSnapshot,
     ConflictReport,
@@ -15,7 +11,11 @@
     HotspotStatus,
     RuntimeEvent,
   } from './lib/api';
+  import { api, describeError, RUNTIME_EVENT } from './lib/api';
   import { copyText } from './lib/clipboard';
+  import Home from './screens/Home.svelte';
+  import Profiles from './screens/Profiles.svelte';
+  import Settings from './screens/Settings.svelte';
 
   type Route = 'home' | 'profiles' | 'settings';
   type Report = 'windows-ics' | { error: string };
@@ -284,6 +284,7 @@
   <div class="app-bar-inner">
     {#if route !== 'home'}
       <button
+        type="button"
         class="icon-button"
         aria-label="Назад"
         title="Назад"
@@ -295,6 +296,7 @@
     <span class="brand">VRG Hotspot</span>
     {#if snapshot && route === 'home'}
       <button
+        type="button"
         class="icon-button settings-button"
         title="Настройки"
         aria-label="Настройки"
@@ -332,18 +334,25 @@
         сборки Windows не пройдена.
       </p>
       {#if snapshot.reports_configured}
-        <button class="button text" onclick={() => (report = 'windows-ics')}
-          >Просмотреть отчёт</button
+        <button
+          type="button"
+          class="button text"
+          onclick={() => (report = 'windows-ics')}
         >
+          Просмотреть отчёт
+        </button>
       {:else}
         <p>Сервер отчётов не настроен.</p>
       {/if}
     </Notice>
   {/if}
 
-  {#if message && !(message.sharing && (starting || snapshot?.ics_signature_mismatch))}
+  {#if message &&
+    !(message.sharing && (starting || snapshot?.ics_signature_mismatch))}
     <Notice title={message.title} problem={message.problem}>
-      {#if message.detail}<p>{message.detail}</p>{/if}
+      {#if message.detail}
+        <p>{message.detail}</p>
+      {/if}
       {#if message.technical && message.detail}
         <details class="disclosure">
           <summary>Технические сведения</summary>
@@ -355,41 +364,57 @@
       <div class="actions">
         {#if message.error && snapshot?.reports_configured}
           <button
+            type="button"
             class="button text"
             onclick={() => {
               if (message?.error) report = { error: message.error };
-            }}>Подготовить отчёт</button
+            }}
           >
+            Подготовить отчёт
+          </button>
         {/if}
-        <button class="button text" onclick={() => (message = null)}
-          >Закрыть</button
+        <button
+          type="button"
+          class="button text"
+          onclick={() => (message = null)}
         >
+          Закрыть
+        </button>
       </div>
     </Notice>
   {/if}
 
   {#if retry && route === 'home' && !starting && snapshot?.status === 'Stopped'}
     <Notice title="Подключение прервано" problem>
-      {#if retry.attempt < RETRY_LIMIT}<p>
-          Повторный запуск через {retry.seconds} с.
-        </p>{/if}
+      {#if retry.attempt < RETRY_LIMIT}
+        <p>Повторный запуск через {retry.seconds} с.</p>
+      {/if}
       <div class="actions">
         <button
+          type="button"
           class="button text"
           onclick={() => {
             retry = null;
             void start();
-          }}>Повторить</button
+          }}
         >
-        <button class="button text" onclick={() => (retry = null)}
-          >Отменить повтор</button
+          Повторить
+        </button>
+        <button
+          type="button"
+          class="button text"
+          onclick={() => (retry = null)}
         >
+          Отменить повтор
+        </button>
       </div>
     </Notice>
   {/if}
 
   {#if !snapshot}
-    {#if !message}<p role="status" class="muted">Загрузка…</p>{/if}
+    {#if !message}
+      <p role="status" class="muted">Загрузка…</p>
+    {/if}
   {:else if route === 'settings'}
     <Settings
       {snapshot}
@@ -425,10 +450,13 @@
       </p>
       <div class="actions">
         <button
+          type="button"
           class="button filled"
           disabled={busy || telemetryBusy}
-          onclick={setup}>{busy ? 'Настройка…' : 'Продолжить'}</button
+          onclick={setup}
         >
+          {busy ? 'Настройка…' : 'Продолжить'}
+        </button>
       </div>
     </section>
   {:else if route === 'profiles'}

@@ -39,6 +39,7 @@
       {@const selected = settings.selected_profile_id === profile.id}
       <li>
         <button
+          type="button"
           class="list-button"
           class:selected
           aria-pressed={selected}
@@ -47,7 +48,9 @@
         >
           <span class="list-icon">{medallionText(profile)}</span>
           <span class="list-label">{profile.label}</span>
-          {#if selected}<Icon name="check" />{/if}
+          {#if selected}
+            <Icon name="check" />
+          {/if}
         </button>
       </li>
     {/each}
@@ -62,34 +65,55 @@
   <form class="panel stack compact" onsubmit={importProfile}>
     <label class="field">
       <span>Ссылка на профиль или подписку</span>
-      <textarea rows="3" bind:value={source} spellcheck="false" required
+      <textarea
+        rows="3"
+        bind:value={source}
+        spellcheck="false"
+        required
       ></textarea>
     </label>
     <div class="actions">
-      <button class="button filled" disabled={busy || !source.trim()}
-        >Импортировать</button
+      <button
+        type="submit"
+        class="button filled"
+        disabled={busy || !source.trim()}
       >
+        Импортировать
+      </button>
       <button
         class="button text"
         type="button"
         disabled={busy}
-        onclick={() => (adding = false)}>Отмена</button
+        onclick={() => (adding = false)}
       >
+        Отмена
+      </button>
     </div>
   </form>
 {:else}
   <div class="actions">
-    <button class="button tonal" disabled={busy} onclick={() => (adding = true)}
-      ><Icon name="add" /> Импортировать</button
+    <button
+      type="button"
+      class="button tonal"
+      disabled={busy}
+      onclick={() => (adding = true)}
     >
-    <button class="button text" disabled={busy} onclick={onRefresh}
-      ><Icon name="refresh" /> Обновить подписку</button
+      <Icon name="add" /> Импортировать
+    </button>
+    <button
+      type="button"
+      class="button text"
+      disabled={busy}
+      onclick={onRefresh}
     >
+      <Icon name="refresh" /> Обновить подписку
+    </button>
   </div>
 {/if}
 
 {#if settings.selected_profile_id && profiles.length > 1}
   <button
+    type="button"
     class="button text"
     disabled={busy}
     onclick={() => onDelete(settings.selected_profile_id ?? '')}

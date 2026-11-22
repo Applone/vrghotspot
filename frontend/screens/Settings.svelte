@@ -113,9 +113,11 @@
 <form class="stack" onsubmit={save}>
   <section class="stack compact" aria-labelledby="sharing-settings">
     <h2 id="sharing-settings">Точка доступа</h2>
-    {#if locked}<p class="muted">
+    {#if locked}
+      <p class="muted">
         Изменение параметров сети доступно после остановки подключения.
-      </p>{/if}
+      </p>
+    {/if}
     <div class="panel stack">
       <label class="switch-row">
         <span>
@@ -125,9 +127,10 @@
         <input
           role="switch"
           type="checkbox"
+          aria-checked={sharing}
           bind:checked={sharing}
           disabled={locked || busy}
-        />
+        >
       </label>
       {#if sharing}
         <label class="field">
@@ -136,7 +139,7 @@
             bind:value={ssid}
             disabled={locked || busy}
             maxlength={SSID_LIMIT}
-          />
+          >
         </label>
         <label class="field">
           <span>Пароль Wi-Fi</span>
@@ -146,37 +149,40 @@
             maxlength={PASSWORD_MAX}
             autocomplete="off"
             spellcheck="false"
-          />
+          >
         </label>
         <label class="field">
           <span>Адаптер точки доступа</span>
           <select bind:value={adapter} disabled={locked || busy}>
             <option value="">Автоматически</option>
-            {#if missingAdapter}<option value={adapter}
-                >Сохранённый адаптер недоступен</option
-              >{/if}
+            {#if missingAdapter}
+              <option value={adapter}>Сохранённый адаптер недоступен</option>
+            {/if}
             {#each radios as radio (radio.id)}
-              <option value={radio.id}
-                >{radio.description && radio.description !== radio.name
+              <option value={radio.id}>
+                {radio.description && radio.description !== radio.name
                   ? `${radio.description} · ${radio.name}`
-                  : radio.name}</option
-              >
+                  : radio.name}
+              </option>
             {/each}
             {#if virtual.length}
               <optgroup label="Интерфейсы Wi-Fi Direct">
                 {#each virtual as item (item.id)}
-                  <option value={item.id}
-                    >{item.name}{item.ipv4_addresses?.length
+                  <option value={item.id}>
+                    {item.name}{item.ipv4_addresses?.length
                       ? ` · ${item.ipv4_addresses.join(', ')}`
-                      : ''} · {item.is_up ? 'активен' : 'неактивен'}</option
-                  >
+                      : ''}
+                    · {item.is_up ? 'активен' : 'неактивен'}
+                  </option>
                 {/each}
               </optgroup>
             {/if}
           </select>
         </label>
       {/if}
-      {#if validation && !locked}<p class="field-error">{validation}</p>{/if}
+      {#if validation && !locked}
+        <p class="field-error">{validation}</p>
+      {/if}
     </div>
   </section>
 
@@ -186,20 +192,21 @@
       <label class="switch-row">
         <span>
           <strong>Автоматическая телеметрия</strong>
-          <small
-            >Статистика запусков, подключений и категорий ошибок. Включена по
-            умолчанию.</small
-          >
+          <small>
+            Статистика запусков, подключений и категорий ошибок. Включена по
+            умолчанию.
+          </small>
         </span>
         <input
           role="switch"
           type="checkbox"
+          aria-checked={settings.telemetry_enabled}
           checked={settings.telemetry_enabled}
           disabled={telemetryBusy ||
             busy ||
             (!snapshot.telemetry.configured && !settings.telemetry_enabled)}
           onchange={(event) => onTelemetry(event.currentTarget.checked)}
-        />
+        >
       </label>
       <p class="muted" role="status">
         {#if telemetryBusy}
@@ -208,36 +215,54 @@
           Сервер телеметрии не настроен.
         {:else if !settings.telemetry_enabled}
           Автоматическая отправка отключена.
-        {:else if !snapshot.telemetry.active || snapshot.telemetry.consecutive_failures > 0}
+        {:else if !snapshot.telemetry.active ||
+          snapshot.telemetry.consecutive_failures > 0}
           Доставка телеметрии пока не подтверждена.
         {/if}
       </p>
     </div>
   </section>
 
-  {#if info.title || info.announce || info.support_url || info.download_bytes != null || info.total_bytes != null || info.expires_at != null}
+  {#if info.title ||
+    info.announce ||
+    info.support_url ||
+    info.download_bytes != null ||
+    info.total_bytes != null ||
+    info.expires_at != null}
     <section class="stack compact">
       <h2>Подписка VPN</h2>
       <div class="panel stack compact">
-        {#if info.title}<strong>{info.title}</strong>{/if}
-        {#if info.announce}<p class="announcement">{info.announce}</p>{/if}
+        {#if info.title}
+          <strong>{info.title}</strong>
+        {/if}
+        {#if info.announce}
+          <p class="announcement">{info.announce}</p>
+        {/if}
         <dl class="facts">
-          {#if info.download_bytes != null}<div>
+          {#if info.download_bytes != null}
+            <div>
               <dt>Получено</dt>
               <dd>{traffic(info.download_bytes)}</dd>
-            </div>{/if}
-          {#if info.total_bytes != null}<div>
+            </div>
+          {/if}
+          {#if info.total_bytes != null}
+            <div>
               <dt>Лимит</dt>
               <dd>{traffic(info.total_bytes)}</dd>
-            </div>{/if}
-          {#if info.expires_at != null}<div>
+            </div>
+          {/if}
+          {#if info.expires_at != null}
+            <div>
               <dt>Действует до</dt>
               <dd>{date.format(info.expires_at * 1000)}</dd>
-            </div>{/if}
-          {#if info.support_url}<div>
+            </div>
+          {/if}
+          {#if info.support_url}
+            <div>
               <dt>Поддержка</dt>
               <dd>{info.support_url}</dd>
-            </div>{/if}
+            </div>
+          {/if}
         </dl>
       </div>
     </section>
@@ -252,7 +277,7 @@
           bind:value={subscription}
           disabled={locked || busy}
           spellcheck="false"
-        />
+        >
       </label>
       <div class="actions">
         <button
@@ -260,14 +285,17 @@
           type="button"
           disabled={busy}
           onclick={onUpdateGeoData}
-          ><Icon name="public" /> Обновить геоданные</button
         >
+          <Icon name="public" /> Обновить геоданные
+        </button>
         <button
           class="button text"
           type="button"
           disabled={busy}
-          onclick={onScan}>Проверить конфликты</button
+          onclick={onScan}
         >
+          Проверить конфликты
+        </button>
       </div>
       {#if conflicts}
         <dl class="facts">
@@ -292,16 +320,18 @@
             class="button text"
             type="button"
             disabled={busy || !logs.length}
-            onclick={onClearLogs}>Очистить</button
+            onclick={onClearLogs}
           >
+            Очистить
+          </button>
         </div>
         {#if logs.length}
           <ul class="logs">
             {#each logs as entry}
               <li>
-                <span
-                  >{time.format(entry.timestamp * 1000)} · {entry.level}</span
-                >
+                <span>
+                  {time.format(entry.timestamp * 1000)} · {entry.level}
+                </span>
                 {entry.message}
               </li>
             {/each}
@@ -315,9 +345,11 @@
 
   <div class="actions">
     <button
+      type="submit"
       class="button filled"
       disabled={busy || locked || !changed || !!validation}
-      >Сохранить изменения</button
     >
+      Сохранить изменения
+    </button>
   </div>
 </form>

@@ -79,7 +79,7 @@ just build
 bun run tauri dev
 ```
 
-`just check` runs the frontend type, compiler warning, and formatting checks,
+`just check` runs Svelte type and compiler checks and Biome lint and formatting checks,
 then runs Rust formatting, type checks, and Clippy. `just test` runs the
 frontend, Rust unit, and CLI integration tests. `just build`
 embeds the production frontend. Both `just check` and `just build` default to

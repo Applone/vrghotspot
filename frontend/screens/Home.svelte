@@ -96,9 +96,9 @@
 >
   <div class="hero-art" aria-hidden="true">
     <div class="signal-rings"></div>
-    <span class="hero-symbol"
-      ><Icon name={accessPoint ? 'wifi_tethering' : 'lan'} /></span
-    >
+    <span class="hero-symbol">
+      <Icon name={accessPoint ? 'wifi_tethering' : 'lan'} />
+    </span>
   </div>
   <div class="hero-content">
     <h1 id="hotspot-title">{title}</h1>
@@ -112,6 +112,7 @@
     {/if}
     {#if running || starting || snapshot.status !== 'Stopped' || stopping}
       <button
+        type="button"
         class="button tonal"
         disabled={stopping || snapshot.status === 'Stopping'}
         onclick={onStop}
@@ -120,6 +121,7 @@
       </button>
     {:else}
       <button
+        type="button"
         class="button filled"
         disabled={!editable || missingWifi || !!problem}
         onclick={() => onStart(ssid.trim(), password)}
@@ -147,14 +149,23 @@
 
 <section class="stack compact">
   <h2>Профиль VPN</h2>
-  <button class="list-button" disabled={!editable} onclick={onProfiles}>
-    <span class="list-icon"
-      >{#if profile}{medallionText(profile)}{:else}<Icon
-          name="public"
-        />{/if}</span
-    >
+  <button
+    type="button"
+    class="list-button"
+    disabled={!editable}
+    onclick={onProfiles}
+  >
+    <span class="list-icon">
+      {#if profile}
+        {medallionText(profile)}
+      {:else}
+        <Icon name="public" />
+      {/if}
+    </span>
     <span class="list-label">{profile?.label ?? 'Прямое подключение'}</span>
-    {#if editable}<Icon name="chevron_right" />{/if}
+    {#if editable}
+      <Icon name="chevron_right" />
+    {/if}
   </button>
 </section>
 
@@ -165,18 +176,17 @@
       <div class="credential">
         <label>
           <span class="field-label">Имя сети</span>
-          <input
-            bind:value={ssid}
-            readonly={!editable}
-            maxlength={SSID_LIMIT}
-          />
+          <input bind:value={ssid} readonly={!editable} maxlength={SSID_LIMIT}>
         </label>
         <button
+          type="button"
           class="icon-button"
           title="Скопировать имя сети"
           aria-label="Скопировать имя сети"
-          onclick={() => onCopy(ssid)}><Icon name="content_copy" /></button
+          onclick={() => onCopy(ssid)}
         >
+          <Icon name="content_copy" />
+        </button>
       </div>
       <div class="credential">
         <label>
@@ -187,14 +197,17 @@
             maxlength={PASSWORD_MAX}
             autocomplete="off"
             spellcheck="false"
-          />
+          >
         </label>
         <button
+          type="button"
           class="icon-button"
           title="Скопировать пароль"
           aria-label="Скопировать пароль"
-          onclick={() => onCopy(password)}><Icon name="content_copy" /></button
+          onclick={() => onCopy(password)}
         >
+          <Icon name="content_copy" />
+        </button>
       </div>
       {#if snapshot.sharing_active}
         <details class="qr-disclosure">

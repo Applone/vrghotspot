@@ -1,6 +1,6 @@
 @font-face {
-  font-family: 'Roboto';
-  src: url('../assets/fonts/roboto-latin.woff2') format('woff2');
+  font-family: "Roboto";
+  src: url("../assets/fonts/roboto-latin.woff2") format("woff2");
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
@@ -11,8 +11,8 @@
 }
 
 @font-face {
-  font-family: 'Roboto';
-  src: url('../assets/fonts/roboto-cyrillic.woff2') format('woff2');
+  font-family: "Roboto";
+  src: url("../assets/fonts/roboto-cyrillic.woff2") format("woff2");
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
@@ -20,8 +20,8 @@
 }
 
 @font-face {
-  font-family: 'Material Symbols Rounded';
-  src: url('../assets/fonts/material-symbols-rounded.woff2') format('woff2');
+  font-family: "Material Symbols Rounded", sans-serif;
+  src: url("../assets/fonts/material-symbols-rounded.woff2") format("woff2");
   font-weight: 400;
   font-style: normal;
   font-display: block;
@@ -34,15 +34,15 @@
    Covers regional indicators (U+1F1E6–1F1FF) plus the tag-sequence base
    (U+1F3F4) used by subdivision flags. */
 @font-face {
-  font-family: 'Twemoji Country Flags';
-  src: url('../assets/fonts/TwemojiCountryFlags.woff2') format('woff2');
+  font-family: "Twemoji Country Flags";
+  src: url("../assets/fonts/TwemojiCountryFlags.woff2") format("woff2");
   font-display: swap;
   unicode-range: U+1F1E6-1F1FF, U+1F3F4, U+E0060-E00FF;
 }
 
 :root {
   color-scheme: light;
-  font-family: Roboto, 'Segoe UI', sans-serif;
+  font-family: Roboto, "Segoe UI", sans-serif;
   font-size: 16px;
   --surface: #f7faff;
   --surface-low: #f1f5fa;
@@ -130,8 +130,8 @@ select:disabled {
 .icon {
   display: inline-block;
   flex: none;
-  font-family: 'Material Symbols Rounded';
-  font-feature-settings: 'liga';
+  font-family: "Material Symbols Rounded", sans-serif;
+  font-feature-settings: "liga";
   font-size: 24px;
   font-weight: 400;
   line-height: 1;
@@ -409,7 +409,7 @@ p.muted:empty {
   background-color: var(--secondary-container);
   color: var(--primary);
   font:
-    600 1rem 'Twemoji Country Flags',
+    600 1rem "Twemoji Country Flags",
     Roboto,
     sans-serif;
 }
@@ -474,6 +474,10 @@ p.muted:empty {
   gap: 0.25rem;
 }
 
+textarea {
+  resize: vertical;
+}
+
 .field :is(input, textarea, select),
 .disclosure textarea {
   width: 100%;
@@ -482,10 +486,6 @@ p.muted:empty {
   border: 1px solid var(--outline);
   background-color: var(--surface-low);
   border-radius: 0.5rem;
-}
-
-textarea {
-  resize: vertical;
 }
 
 .field-error {
@@ -520,7 +520,7 @@ textarea {
 }
 
 .switch-row input::before {
-  content: '';
+  content: "";
   position: absolute;
   inset-inline-start: 0.375rem;
   inset-block-start: 50%;
@@ -565,12 +565,12 @@ textarea {
   background: var(--error-container);
 }
 
-.notice.problem .button.text {
-  color: var(--on-error-container);
-}
-
 .notice .button.text {
   margin-inline-start: -0.5rem;
+}
+
+.notice.problem .button.text {
+  color: var(--on-error-container);
 }
 
 .disclosure summary,
@@ -624,7 +624,7 @@ textarea {
   border-radius: 0.5rem;
   background: var(--surface);
   font:
-    0.75rem/1.5 ui-monospace,
+    0.75rem / 1.5 ui-monospace,
     monospace;
   overflow-wrap: anywhere;
 }

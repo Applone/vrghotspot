@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { api, describeError } from '../lib/api';
   import type { ReportPreview } from '../lib/api';
+  import { api, describeError } from '../lib/api';
   import { copyText } from '../lib/clipboard';
 
   let {
@@ -107,16 +107,20 @@
     {#if receipt}
       <label class="field">
         <span>Номер отчёта</span>
-        <input value={receipt} readonly />
+        <input value={receipt} readonly>
       </label>
       <p role="status" class="muted">{copyStatus}</p>
       <div class="actions dialog-actions">
-        <button class="button text" onclick={copyReceipt}
-          >Скопировать номер</button
+        <button type="button" class="button text" onclick={copyReceipt}>
+          Скопировать номер
+        </button>
+        <button
+          type="button"
+          class="button tonal"
+          onclick={() => dialog.close()}
         >
-        <button class="button tonal" onclick={() => dialog.close()}
-          >Закрыть</button
-        >
+          Закрыть
+        </button>
       </div>
     {:else}
       <p>
@@ -131,9 +135,9 @@
 
       {#if preview}
         <p class="muted">Отправка на {preview.destination}</p>
-        {#if !ics && preview.logs_truncated}<p class="muted">
-            В отчёт вошли последние записи журнала.
-          </p>{/if}
+        {#if !ics && preview.logs_truncated}
+          <p class="muted">В отчёт вошли последние записи журнала.</p>
+        {/if}
         <details class="disclosure" bind:open={expanded}>
           <summary>Содержимое отчёта</summary>
           {#if expanded}
@@ -146,7 +150,7 @@
           {/if}
         </details>
         <label class="consent">
-          <input type="checkbox" bind:checked={consent} disabled={busy} />
+          <input type="checkbox" bind:checked={consent} disabled={busy}>
           {ics
             ? 'Разрешаю разовую отправку отчёта и файла hnetcfgclient.dll'
             : 'Согласен на разовую отправку отчёта'}
@@ -155,23 +159,36 @@
         <p class="muted">Просмотрите отчёт перед отправкой.</p>
       {/if}
 
-      {#if failure}<p class="field-error" role="alert">{failure}</p>{/if}
+      {#if failure}
+        <p class="field-error" role="alert">{failure}</p>
+      {/if}
       <div class="actions dialog-actions">
         <button
+          type="button"
           class="button text"
           disabled={busy}
-          onclick={() => dialog.close()}>Отмена</button
+          onclick={() => dialog.close()}
         >
+          Отмена
+        </button>
         {#if preview}
           <button
+            type="button"
             class="button filled"
             disabled={!consent || busy}
-            onclick={send}>{busy ? 'Отправка…' : 'Отправить'}</button
+            onclick={send}
           >
+            {busy ? 'Отправка…' : 'Отправить'}
+          </button>
         {:else}
-          <button class="button filled" disabled={busy} onclick={prepare}
-            >{busy ? 'Подготовка…' : 'Подготовить отчёт'}</button
+          <button
+            type="button"
+            class="button filled"
+            disabled={busy}
+            onclick={prepare}
           >
+            {busy ? 'Подготовка…' : 'Подготовить отчёт'}
+          </button>
         {/if}
       </div>
     {/if}

@@ -1,0 +1,10 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "files": { "includes": ["frontend/**", "vite.config.ts", "biome.json"] },
+  "formatter": { "indentStyle": "space", "indentWidth": 2 },
+  "javascript": { "formatter": { "quoteStyle": "single" } },
+  "html": {
+    "experimentalFullSupportEnabled": true,
+    "formatter": { "enabled": true, "indentScriptAndStyle": true }
+  }
+}

@@ -571,12 +571,12 @@ function appendBits(bb: number[], val: number, length: number): void {
  * `\`, `;`, `,`, `:` and `"` are escaped per the de-facto scheme.
  */
 export function wifiPayload(ssid: string, passphrase: string): string {
-  const escape = (value: string) => value.replace(/([\\;,:"])/g, '\\$1');
+  const escapeField = (value: string) => value.replace(/([\\;,:"])/g, '\\$1');
   // A value made entirely of hex digits is ambiguous here: a reader is entitled
   // to decode it as hex rather than as literal text, so an SSID like "ABCD1234"
   // could be joined under a different name. Quoting forces the literal reading.
   const literal = (value: string) => {
-    const escaped = escape(value);
+    const escaped = escapeField(value);
     return value.length > 0 && /^[0-9A-Fa-f]+$/.test(value)
       ? `"${escaped}"`
       : escaped;

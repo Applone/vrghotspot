@@ -121,7 +121,7 @@ impl ReportManager {
         if bytes.len() > max_dll_bytes {
             return Err("report exceeds size limit".to_owned());
         }
-        if format!("{:x}", Sha256::digest(&bytes)) != mismatch.sha256 {
+        if hex::encode(Sha256::digest(&bytes)) != mismatch.sha256 {
             return Err("system DLL changed since signature verification".to_owned());
         }
         self.enqueue(SupportReport {
@@ -412,7 +412,7 @@ mod tests {
         use base64::{Engine, engine::general_purpose::STANDARD};
         use sha2::{Digest, Sha256};
         let dll = b"MZ\0\xffexample DLL bytes";
-        let hash = format!("{:x}", Sha256::digest(dll));
+        let hash = hex::encode(Sha256::digest(dll));
         let preview = manager
             .prepare_ics_report(
                 IcsSignatureMismatch {

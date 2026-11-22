@@ -46,7 +46,7 @@ impl Image {
 
     pub fn parse(data: Vec<u8>) -> Result<Self> {
         let mut image = Self {
-            hash: format!("{:x}", Sha256::digest(&data)),
+            hash: hex::encode(Sha256::digest(&data)),
             data,
             sections: Vec::new(),
             starts: HashSet::new(),

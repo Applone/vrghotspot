@@ -22,3 +22,4 @@ pnpm-lock.yaml
 id_ed25519
 id_rsa
 *.txt
+/.svelte-check/
