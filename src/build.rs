@@ -8,6 +8,7 @@ fn main() {
     // Windows compatibility report endpoint baked into the binary.
     println!("cargo:rerun-if-env-changed=VRG_DEFAULT_SUBSCRIPTION_URL");
     println!("cargo:rerun-if-env-changed=VRG_SUPPORT_ENDPOINT");
+    println!("cargo:rerun-if-changed=package.json");
     println!("cargo:rerun-if-changed=src/third_party/core_bridge");
     println!("cargo:rerun-if-changed=src/third_party/mihomo");
     println!("cargo:rerun-if-env-changed=VRG_MIHOMO_VERSION");
@@ -90,7 +91,20 @@ fn main() {
     for library in system_libraries {
         println!("cargo:rustc-link-lib={library}");
     }
-    tauri_build::build();
+    if target_os == "windows" {
+        // The Rust test harness also imports functions from Common Controls v6.
+        println!("cargo:rerun-if-changed=packaging/windows.rc");
+        println!("cargo:rerun-if-changed=packaging/windows.manifest");
+        embed_resource::compile_for_everything("packaging/windows.rc", embed_resource::NONE)
+            .manifest_required()
+            .expect("failed to embed the Windows application manifest");
+
+        let attributes = tauri_build::Attributes::new()
+            .windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest());
+        tauri_build::try_build(attributes).expect("failed to run Tauri's build script");
+    } else {
+        tauri_build::build();
+    }
 }
 
 fn mihomo_version(mihomo_dir: &Path) -> String {

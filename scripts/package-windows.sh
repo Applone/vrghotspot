@@ -23,6 +23,10 @@ bun run tauri build "${options[@]}" --no-bundle -- --locked
 target_dir=$(cargo metadata --format-version 1 --no-deps --locked | bun -p '(await Bun.stdin.json()).target_directory')
 config=$(bun -p 'JSON.stringify({bundle:{resources:{[process.argv[1]]:"WebView2Loader.dll"}}})' "$target_dir/$target/$profile/WebView2Loader.dll")
 bun run tauri bundle "${options[@]}" --bundles nsis --config "$config"
-installer=$(bun -p 'const {productName, version} = await Bun.file("tauri.conf.json").json(); productName + "_" + version + "_x64-setup.exe"')
+installer=$(bun -p '
+    const { productName, version: versionFile } = await Bun.file("tauri.conf.json").json();
+    const { version } = await Bun.file(versionFile).json();
+    productName + "_" + version + "_x64-setup.exe"
+')
 mkdir -p artifacts
 cp "$target_dir/$target/$profile/bundle/nsis/$installer" artifacts/

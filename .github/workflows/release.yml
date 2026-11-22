@@ -26,10 +26,12 @@ jobs:
           import tomllib
           from pathlib import Path
 
-          version = tomllib.loads(Path("Cargo.toml").read_text())["package"]["version"]
-          for name in ("package.json", "tauri.conf.json"):
-              if json.loads(Path(name).read_text())["version"] != version:
-                  raise SystemExit(f"{name} version differs from Cargo.toml ({version})")
+          version = json.loads(Path("package.json").read_text())["version"]
+          cargo_version = tomllib.loads(Path("Cargo.toml").read_text())["package"]["version"]
+          if cargo_version != version:
+              raise SystemExit(
+                  f"Cargo.toml version ({cargo_version}) differs from package.json ({version})"
+              )
           if os.environ["GITHUB_REF_NAME"] != f"v{version}":
               raise SystemExit(f"Expected release tag v{version}")
           PY
